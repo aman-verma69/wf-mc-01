@@ -5,7 +5,18 @@ async def search_products(query: str, max_price: int | None = None):
     products = rows("SELECT * FROM products WHERE stock > 0")
     if max_price:
         products = [p for p in products if p["price"] <= max_price]
-    return [p for p in products if not terms or any(t in (p["name"] + p["description"] + p["category"]).lower() for t in terms)]
+    if not terms:
+        return products
+    ranked = []
+    for product in products:
+        searchable = (product["name"] + " " + product["description"] + " " + product["category"]).lower()
+        score = sum(term in searchable for term in terms)
+        if score:
+            ranked.append((score, product))
+    # Keep the best semantic keyword matches: “wireless keyboard” should not surface headphones
+    # merely because they are also wireless.
+    best_score = max((score for score, _ in ranked), default=0)
+    return [product for score, product in ranked if score == best_score]
 
 async def get_product(product_id: str):
     return row("SELECT * FROM products WHERE id = ?", (product_id,))

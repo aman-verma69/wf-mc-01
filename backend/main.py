@@ -7,14 +7,17 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from backend.database.db import init_db, execute, rows
-from backend.services.audit_service import audit
-from backend.agents.intent_agent import decide
-from backend.tools.catalog_tools import search_products, get_product
+from backend.audit.logger import audit
+from backend.agent.agent import decide
+from backend.catalog.catalog_service import search_products, get_product
 from backend.tools.cart_tools import add_to_cart, remove_from_cart, get_cart, calculate_total
 from backend.services.checkout_service import prepare_checkout
-from backend.services.policy_service import validate_checkout
-from backend.services.payment_service import create_order, verify_demo_payment, verify_razorpay_payment
+from backend.security.policies import validate_checkout
+from backend.payments.razorpay_service import create_order
+from backend.payments.verification import verify_demo_payment, verify_razorpay_payment
 
+# Project-level configuration is loaded first; backend/.env remains supported for local setups.
+load_dotenv(Path.cwd() / ".env")
 load_dotenv(Path(__file__).with_name(".env"))
 
 @asynccontextmanager

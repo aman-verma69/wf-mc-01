@@ -1,15 +1,10 @@
-import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "commerce.db"
+from backend.catalog.products import PRODUCTS
 
-PRODUCTS = [
-    ("soundmax-pro", "SoundMax Pro ANC", "Wireless ANC headphones with 35-hour battery", 2499, 12, "headphones"),
-    ("pulse-air", "Pulse Air ANC", "Lightweight ANC headphones with spatial audio", 2899, 7, "headphones"),
-    ("bassgo-mini", "BassGo Mini", "Everyday wireless headphones", 1499, 18, "headphones"),
-]
+DB_PATH = Path(__file__).parent / "commerce.db"
 
 @contextmanager
 def connection():
@@ -30,8 +25,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, session_id TEXT, amount INTEGER, status TEXT, payment_id TEXT);
         CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP, session_id TEXT, order_id TEXT, event_type TEXT, status TEXT, reason TEXT, metadata TEXT);
         """)
-        if db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0:
-            db.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?)", PRODUCTS)
+        db.executemany("""INSERT INTO products VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description,
+            price=excluded.price, stock=excluded.stock, category=excluded.category""", PRODUCTS)
 
 def rows(query, params=()):
     with connection() as db:

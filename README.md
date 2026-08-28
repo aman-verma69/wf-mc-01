@@ -29,6 +29,6 @@ ollama pull gpt-oss:20b
 ollama serve
 ```
 
-Copy `backend/.env.example` to `backend/.env`; it is already configured for Ollama at `http://localhost:11434/v1` with `gpt-oss:20b`. The conversational planner then understands natural requests and context (for example, comparisons, pronouns, quantities, and product references). It only proposes an action: the backend continues to supply catalog facts, validate product IDs, calculate money, enforce explicit approval, and verify payment.
+Copy `.env.example` to `.env`; it is already configured for Ollama at `http://localhost:11434/v1` with `gpt-oss:20b`. The conversational planner then understands natural requests and context (for example, comparisons, pronouns, quantities, and product references). It only proposes an action: the backend continues to supply catalog facts, validate product IDs, calculate money, enforce explicit approval, and verify payment.
 
 If the local model service is unavailable, a limited safe fallback supports basic search, cart, and checkout commands.

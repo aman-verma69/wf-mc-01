@@ -1,4 +1,5 @@
 backend/.env
+.env
 backend/.venv/
 backend/database/commerce.db
 frontend/node_modules

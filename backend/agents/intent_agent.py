@@ -4,6 +4,7 @@ import os
 import re
 from typing import Literal
 from pydantic import BaseModel, Field
+from backend.agent.prompts import SYSTEM_PROMPT
 
 INTENTS = ("SEARCH_PRODUCTS", "GET_PRODUCT_DETAILS", "ADD_TO_CART", "REMOVE_FROM_CART", "VIEW_CART", "PREPARE_CHECKOUT", "CONFIRM_PURCHASE", "CHECK_PAYMENT_STATUS", "CHAT")
 
@@ -13,11 +14,6 @@ class IntentDecision(BaseModel):
     product_id: str | None = None
     quantity: int = Field(default=1, ge=1, le=10)
     response: str = ""
-
-SYSTEM = """You are the language layer for an ecommerce assistant. Decide the user's intended action and return JSON only.
-Use only product IDs included in LIVE CATALOG and only for a clearly identified product. Never state or estimate price, stock, discounts, totals, or payment status; those are supplied by the server. For general shopping questions use CHAT and give a concise helpful response. A purchase can only be confirmed when the user explicitly gives an unambiguous confirmation. Never turn 'yes' or a casual acknowledgement into CONFIRM_PURCHASE.
-Allowed intents: SEARCH_PRODUCTS, GET_PRODUCT_DETAILS, ADD_TO_CART, REMOVE_FROM_CART, VIEW_CART, PREPARE_CHECKOUT, CONFIRM_PURCHASE, CHECK_PAYMENT_STATUS, CHAT.
-For search, put useful search terms in query. For product operations, set product_id only if it appears in the catalog/cart context."""
 
 def _fallback(message: str, catalog: list[dict], cart: list[dict]) -> IntentDecision:
     """Keeps fundamental shopping actions usable when no LLM key has been configured."""
@@ -43,7 +39,7 @@ async def decide(message: str, catalog: list[dict], cart: list[dict], history: l
         result = await client.chat.completions.create(
             model=os.getenv("LLM_MODEL", "gpt-oss:20b"),
             messages=[
-                {"role": "system", "content": SYSTEM},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": f"CONTEXT:\n{context}\n\nUSER: {message}"},
             ],
             response_format={"type": "json_schema", "json_schema": {"name": "commerce_decision", "strict": True, "schema": IntentDecision.model_json_schema()}},
