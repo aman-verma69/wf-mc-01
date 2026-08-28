@@ -90,6 +90,9 @@ async def cart_add(body: CartRequest):
     if not cart: raise HTTPException(400, "Product is unavailable")
     audit(body.session_id, "CART_UPDATED", metadata={"product_id": body.product_id})
     return {"cart": cart}
+@app.get("/api/catalog")
+async def catalog():
+    return {"products": await search_products("")}
 @app.get("/api/cart/{session_id}")
 async def cart(session_id): return {"cart": await get_cart(session_id), "total": await calculate_total(session_id)}
 @app.post("/api/demo/price-change")

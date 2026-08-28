@@ -4,3 +4,17 @@
 
 * { box-sizing: border-box; }
 body { background: #f7f8fc; color: #18214d; }
+
+.product-art { position: relative; isolation: isolate; height: 128px; overflow: hidden; display: grid; place-items: center; background: linear-gradient(135deg, #edf1ff, #dce6ff); color: #3156e8; }
+.product-art span { z-index: 1; font-size: 58px; line-height: 1; font-weight: 200; text-shadow: 8px 10px 18px #3156e844; }
+.product-art p { position: absolute; left: 16px; bottom: 12px; z-index: 2; margin: 0; font-size: 10px; font-weight: 700; letter-spacing: .16em; color: #3156e8; }
+.product-orb { position: absolute; width: 170px; height: 170px; border-radius: 9999px; background: #ffffffa8; right: -45px; top: -70px; }
+.product-art-wearables { background: linear-gradient(135deg, #f0ecff, #ddd4ff); color: #7048e8; }
+.product-art-accessories { background: linear-gradient(135deg, #e6f8ff, #c9edff); color: #087ea4; }
+.product-art-work { background: linear-gradient(135deg, #edf7f2, #d7f1e3); color: #21865c; }
+.hero-grid { min-height: 320px; background-image: linear-gradient(120deg, #182d80, #3156e8); }
+.hero-device { position: absolute; border: 10px solid #ffffff; border-radius: 34px; box-shadow: 0 28px 55px #08134f80; transform: rotate(18deg); }
+.hero-device-one { width: 150px; height: 245px; right: 13%; top: 44px; background: linear-gradient(150deg, #aebcff, #ffffff); }
+.hero-device-two { width: 120px; height: 120px; right: 4%; top: 108px; background: #263eaa; border-color: #c7d2ff; border-radius: 50%; }
+.hero-ring { position: absolute; right: -100px; top: -115px; width: 420px; height: 420px; border: 52px solid #ffffff12; border-radius: 9999px; }
+@media (max-width: 640px) { .hero-device { opacity: .34; } .hero-device-one { right: -15px; } .hero-device-two { right: 15px; } }
