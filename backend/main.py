@@ -1,16 +1,21 @@
+import json
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from backend.database.db import init_db, execute, rows
 from backend.services.audit_service import audit
-from backend.agents.intent_agent import classify, price_cap
-from backend.tools.catalog_tools import search_products
+from backend.agents.intent_agent import decide
+from backend.tools.catalog_tools import search_products, get_product
 from backend.tools.cart_tools import add_to_cart, remove_from_cart, get_cart, calculate_total
 from backend.services.checkout_service import prepare_checkout
 from backend.services.policy_service import validate_checkout
 from backend.services.payment_service import create_order, verify_demo_payment, verify_razorpay_payment
+
+load_dotenv(Path(__file__).with_name(".env"))
 
 @asynccontextmanager
 async def lifespan(app):
@@ -28,22 +33,32 @@ def reply(text, **extra): return {"message": text, **extra}
 async def chat(body: ChatRequest):
     session, message = body.session_id, body.message
     audit(session, "USER_MESSAGE", metadata={"message": message})
-    intent = await classify(message); audit(session, "INTENT_DETECTED", metadata={"intent": intent})
+    catalog, cart_now = await search_products(""), await get_cart(session)
+    prior = rows("SELECT metadata FROM audit_events WHERE session_id=? AND event_type='USER_MESSAGE' ORDER BY id DESC LIMIT 6", (session,))
+    history = [json.loads(item["metadata"]).get("message", "") for item in reversed(prior)]
+    decision = await decide(message, catalog, cart_now, history)
+    intent = decision.intent; audit(session, "INTENT_DETECTED", metadata=decision.model_dump())
     if intent == "SEARCH_PRODUCTS":
-        products = await search_products(message, price_cap(message)); audit(session, "PRODUCT_SEARCHED", metadata={"count": len(products)})
-        return reply("Here are matching in-stock products. Prices and stock are live backend data.", intent=intent, products=products, cart=await get_cart(session))
+        products = await search_products(decision.query or message); audit(session, "PRODUCT_SEARCHED", metadata={"count": len(products)})
+        text = decision.response or ("I found these matching products." if products else "I couldn't find a matching in-stock product. Try describing the item differently.")
+        return reply(text, intent=intent, products=products, cart=cart_now)
+    if intent == "GET_PRODUCT_DETAILS":
+        product = await get_product(decision.product_id) if decision.product_id else None
+        if not product: return reply("Which product would you like details about?", intent=intent)
+        audit(session, "PRODUCT_SELECTED", metadata={"product_id": product["id"]})
+        return reply(decision.response or f"Here are the live details for {product['name']}.", intent=intent, products=[product], cart=cart_now)
     if intent == "ADD_TO_CART":
-        products = await search_products(message.replace("add", "")); product = products[0] if products else None
+        product = await get_product(decision.product_id) if decision.product_id else None
         if not product: return reply("I couldn't find that product. Try selecting one from the results.", intent=intent)
-        cart = await add_to_cart(session, product["id"])
-        audit(session, "CART_UPDATED", metadata={"product_id": product["id"]})
-        return reply(f"Added {product['name']} to your cart.", intent=intent, cart=cart)
+        cart = await add_to_cart(session, product["id"], decision.quantity)
+        audit(session, "CART_UPDATED", metadata={"product_id": product["id"], "quantity": decision.quantity})
+        return reply(decision.response or f"Added {product['name']} to your cart.", intent=intent, cart=cart)
     if intent == "REMOVE_FROM_CART":
-        cart = await get_cart(session)
-        target = next((i for i in cart if i["name"].lower().replace(" anc", "") in message.lower() or i["id"] in message.lower()), None)
-        if target: cart = await remove_from_cart(session, target["id"]); audit(session, "CART_UPDATED")
-        return reply("Cart updated.", intent=intent, cart=cart)
-    if intent == "VIEW_CART": return reply("Your cart total is calculated by the backend.", intent=intent, cart=await get_cart(session), total=await calculate_total(session))
+        if decision.product_id and any(item["id"] == decision.product_id for item in cart_now):
+            cart_now = await remove_from_cart(session, decision.product_id); audit(session, "CART_UPDATED", metadata={"product_id": decision.product_id})
+            return reply(decision.response or "Cart updated.", intent=intent, cart=cart_now)
+        return reply("Tell me which item in your cart you want to remove.", intent=intent, cart=cart_now)
+    if intent == "VIEW_CART": return reply(decision.response or "Here is your current cart.", intent=intent, cart=cart_now, total=await calculate_total(session))
     if intent == "PREPARE_CHECKOUT":
         draft = await prepare_checkout(session)
         if not draft: return reply("Your cart is empty—add a product before checkout.", intent=intent)
@@ -60,7 +75,11 @@ async def chat(body: ChatRequest):
             pid = await verify_demo_payment(payment["order_id"]); audit(session, "PAYMENT_SUCCESS", order_id=payment["order_id"]); audit(session, "PAYMENT_VERIFIED", order_id=payment["order_id"])
             return reply("Demo payment verified server-side. Purchase complete.", intent=intent, payment={**payment, "payment_id": pid, "verified": True})
         return reply("Razorpay Test Mode order created. Complete payment in the checkout modal.", intent=intent, payment=payment)
-    return reply("I can help search products, manage your cart, and checkout.", intent=intent)
+    if intent == "CHECK_PAYMENT_STATUS":
+        order = rows("SELECT id, amount, status, payment_id FROM orders WHERE session_id=? ORDER BY rowid DESC LIMIT 1", (session,))
+        text = decision.response or ("Your latest order is " + order[0]["status"].lower() + "." if order else "You do not have an order yet.")
+        return reply(text, intent=intent, order=order[0] if order else None)
+    return reply(decision.response or "I can help you discover products, compare them, and manage your cart.", intent=intent, cart=cart_now)
 
 @app.post("/api/cart")
 async def cart_add(body: CartRequest):
