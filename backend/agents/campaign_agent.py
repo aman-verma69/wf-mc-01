@@ -2,7 +2,7 @@ from backend.agents.base_agent import AgentConfig, BaseAgent
 
 campaign_agent = BaseAgent(AgentConfig(
     name="campaign_agent",
-    backend="gpt-oss",
+    backend="groq",
     delegation_scope=[],
     system_prompt=(
         "You execute outreach campaigns proposed by the growth agent, by "

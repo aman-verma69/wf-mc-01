@@ -21,7 +21,7 @@ def get_groq_client() -> AsyncOpenAI:
     return _client
 
 
-async def grok_chat(messages: list[dict], tools: list[dict] | None = None, **kwargs) -> dict:
+async def groq_chat(messages: list[dict], tools: list[dict] | None = None, **kwargs) -> dict:
     client = get_groq_client()
     response = await client.chat.completions.create(
         model=settings.GROQ_MODEL,

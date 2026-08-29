@@ -2,7 +2,7 @@ from backend.agents.base_agent import AgentConfig, BaseAgent
 
 growth_agent = BaseAgent(AgentConfig(
     name="growth_agent",
-    backend="grok",
+    backend="groq",
     delegation_scope=[],
     system_prompt=(
         "You identify growth opportunities: abandoned carts worth recovering, "

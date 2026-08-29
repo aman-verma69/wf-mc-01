@@ -2,7 +2,7 @@ from backend.agents.base_agent import AgentConfig, BaseAgent
 
 analytics_agent = BaseAgent(AgentConfig(
     name="analytics_agent",
-    backend="gpt-oss",
+    backend="groq",
     delegation_scope=[],
     system_prompt=(
         "You interpret and narrate business metrics for a human reader. "

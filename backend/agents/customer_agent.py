@@ -2,7 +2,7 @@ from backend.agents.base_agent import AgentConfig, BaseAgent
 
 customer_agent = BaseAgent(AgentConfig(
     name="customer_agent",
-    backend="grok",
+    backend="groq",
     delegation_scope=[],  # can look up orders but not initiate new payments
     system_prompt=(
         "You are a customer support agent. Help with order status, refund "
