@@ -1,6 +1,6 @@
 """
 Base class for all agents. Each agent picks which LLM backend it uses
-(Grok for reasoning-heavy agents, gpt-oss-20B for cheaper/simpler ones —
+(Groq for reasoning-heavy agents, gpt-oss-20B for cheaper/simpler ones —
 adjust per your cost/latency needs) and gets a standard tool-calling loop.
 """
 from dataclasses import dataclass, field
@@ -9,17 +9,17 @@ from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.integrations.llm.gpt_oss_client import gpt_oss_chat
-from backend.integrations.llm.grok_client import grok_chat
+from backend.integrations.llm.groq_client import groq_chat
 from backend.tools.commerce_tools import TOOL_SCHEMAS, run_tool
 
-LLMBackend = Literal["grok", "gpt-oss"]
+LLMBackend = Literal["groq", "gpt-oss"]
 
 
 @dataclass
 class AgentConfig:
     name: str
     system_prompt: str
-    backend: LLMBackend = "grok"
+    backend: LLMBackend = "groq"
     delegation_scope: list[str] = field(default_factory=list)  # e.g. ["checkout"] for buyer_agent
     tool_schemas: list[dict] = field(default_factory=lambda: TOOL_SCHEMAS)
 
@@ -29,8 +29,8 @@ class BaseAgent:
         self.config = config
 
     async def _call_llm(self, messages: list[dict]) -> dict:
-        if self.config.backend == "grok":
-            return await grok_chat(messages, tools=self.config.tool_schemas)
+        if self.config.backend == "groq":
+            return await groq_chat(messages, tools=self.config.tool_schemas)
         return await gpt_oss_chat(messages, tools=self.config.tool_schemas)
 
     async def run(self, db: AsyncSession, user_message: str, history: list[dict] | None = None, max_turns: int = 4) -> str:

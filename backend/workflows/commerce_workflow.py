@@ -41,12 +41,12 @@ class CommerceWorkflow(Workflow):
         agent_key = ev.get("agent_key", "buyer")
         if agent_key not in AGENTS:
             raise ValueError(f"Unknown agent_key: {agent_key}. Valid: {list(AGENTS)}")
-        await ctx.set("db", ev.get("db"))
+        await ctx.store.set("db", ev.get("db"))
         return RouteEvent(agent_key=agent_key, message=ev.get("message"))
 
     @step
     async def dispatch(self, ctx: Context, ev: RouteEvent) -> StopEvent:
-        db: AsyncSession = await ctx.get("db")
+        db: AsyncSession = await ctx.store.get("db")
         agent = AGENTS[ev.agent_key]
         reply = await agent.run(db, ev.message)
         return StopEvent(result={"agent": ev.agent_key, "reply": reply})

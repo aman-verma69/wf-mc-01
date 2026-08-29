@@ -27,9 +27,9 @@ class Settings(BaseSettings):
 
     # --- LLM backends for agents ---
     # Grok (x.ai) — https://console.x.ai
-    XAI_API_KEY: str = ""
-    XAI_BASE_URL: str = "https://api.x.ai/v1"
-    XAI_MODEL: str = "grok-4-latest"
+    GROQ_API_KEY: str = ""
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    GROQ_MODEL: str = "openai/gpt-oss-20b"
 
     # gpt-oss-20B — self-hosted (vLLM / Ollama / etc). Point this at your
     # own inference server; there is no Anthropic/OpenAI-hosted endpoint for it.
