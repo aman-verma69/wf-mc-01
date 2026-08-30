@@ -1,9 +1,18 @@
-# Environment secrets
-.env
-
-# Virtual environment
+# Python
 .venv/
-
-# Python cache
 __pycache__/
 *.py[cod]
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Node.js
+frontend/node_modules/
+frontend/.next/
+
+# Test/cache files
+.pytest_cache/
+.coverage
+htmlcov/

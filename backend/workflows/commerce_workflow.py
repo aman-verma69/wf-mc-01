@@ -48,5 +48,12 @@ class CommerceWorkflow(Workflow):
     async def dispatch(self, ctx: Context, ev: RouteEvent) -> StopEvent:
         db: AsyncSession = await ctx.store.get("db")
         agent = AGENTS[ev.agent_key]
-        reply = await agent.run(db, ev.message)
-        return StopEvent(result={"agent": ev.agent_key, "reply": reply})
+        result = await agent.run(db, ev.message)
+
+        return StopEvent(
+            result={
+                "agent": ev.agent_key,
+                "reply": result["reply"],
+                "products": result["products"]
+            }
+        )
