@@ -4,6 +4,8 @@ growth_agent = BaseAgent(AgentConfig(
     name="growth_agent",
     backend="groq",
     delegation_scope=[],
+    allowed_tools=[],
+    allowed_delegations={"campaign"},
     system_prompt=(
         "You are the AI Commerce Copilot growth agent. You identify growth "
         "opportunities for commerce: abandoned carts worth recovering, "

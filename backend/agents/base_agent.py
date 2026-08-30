@@ -15,6 +15,16 @@ from backend.integrations.llm.groq_client import groq_chat
 from backend.tools.commerce_tools import TOOL_SCHEMAS, normalize_search_results, run_tool
 
 
+DEFAULT_DELEGATION_RULES = {
+    "buyer": {"catalog", "customer"},
+    "catalog": {"buyer"},
+    "customer": {"buyer"},
+    "analytics": {"growth"},
+    "growth": {"campaign"},
+    "campaign": set(),
+}
+
+
 LLMBackend = Literal["groq", "gpt-oss"]
 
 
@@ -24,6 +34,8 @@ class AgentConfig:
     system_prompt: str
     backend: LLMBackend = "groq"
     delegation_scope: list[str] = field(default_factory=list)
+    allowed_tools: list[str] = field(default_factory=lambda: ["search_web", "initiate_checkout"])
+    allowed_delegations: set[str] = field(default_factory=lambda: DEFAULT_DELEGATION_RULES["buyer"])
     tool_schemas: list[dict] = field(default_factory=lambda: TOOL_SCHEMAS)
 
 
@@ -66,6 +78,18 @@ class BaseAgent:
             "shirt",
         ]
         return any(token in lowered for token in search_tokens)
+
+    def _build_delegation_request(self, target_agent: str, reason: str, task: str, context_keys: list[str] | None = None) -> dict | None:
+        allowed = self.config.allowed_delegations
+        if allowed is not None and target_agent not in allowed:
+            return None
+        return {
+            "type": "delegation_request",
+            "target_agent": target_agent,
+            "reason": reason,
+            "task": task,
+            "context_keys": context_keys or [],
+        }
 
     async def run(
         self,
@@ -118,10 +142,64 @@ class BaseAgent:
                 search_products = search_result.get("products") or normalize_search_results(search_result.get("result"))
                 if search_products:
                     products.extend(search_products)
+                    valid_price_products = [p for p in products if p.get("price") is not None]
+                    if valid_price_products:
+                        cheapest = min(valid_price_products, key=lambda p: p.get("price") or 10**9)
+                        most_expensive = max(valid_price_products, key=lambda p: p.get("price") or 0)
+                        price_summary = (
+                            f"Compared on price, {cheapest.get('name')} is the most affordable at ₹{cheapest.get('price')} while "
+                            f"{most_expensive.get('name')} is the higher-end option at ₹{most_expensive.get('price')}."
+                        )
+                    else:
+                        price_summary = "The available catalog evidence shows a few product candidates, but pricing details are incomplete."
+
+                    product_names = [product.get("name") or "option" for product in products[:3]]
+                    reply = (
+                        f"I found {len(products)} product candidates that fit the request. "
+                        f"{price_summary} For gaming, {', '.join(product_names[:2])} are the strongest current matches from the accessible product data."
+                    )
                     return {
-                        "reply": "I found a few options that match your request.",
+                        "status": "completed",
+                        "reply": reply,
                         "products": products,
+                        "ok": True,
+                        "error": None,
+                        "data": {"source": "search_web", "tool_trace": [{"tool": "search_web", "ok": True}]},
+                        "actions": ["search_web"],
+                        "tool_calls": ["search_web"],
+                        "delegation_request": None,
                     }
+
+                return {
+                    "status": "completed",
+                    "reply": "I found search results, but none of them were verified as individual product matches for this request.",
+                    "products": [],
+                    "ok": True,
+                    "error": None,
+                    "data": {
+                        "source": "search_web",
+                        "tool_trace": [{"tool": "search_web", "ok": True, "verified_products": 0}],
+                    },
+                    "actions": ["search_web"],
+                    "tool_calls": ["search_web"],
+                    "delegation_request": None,
+                }
+
+            tool_error = search_result.get("reason") or search_result.get("error_type") or "Live product search is temporarily unavailable."
+            return {
+                "status": "degraded",
+                "reply": "I couldn’t complete the live product search right now. Please try again shortly.",
+                "products": [],
+                "ok": False,
+                "error": search_result.get("error") or "product_search_unavailable",
+                "data": {
+                    "source": "search_web",
+                    "tool_trace": [{"tool": "search_web", "ok": False, "error": tool_error, "retryable": search_result.get("retryable", False)}],
+                },
+                "actions": ["search_web_failed"],
+                "tool_calls": ["search_web"],
+                "delegation_request": None,
+            }
 
         # Tool-calling loop.
         for turn in range(max_turns):
@@ -150,9 +228,30 @@ class BaseAgent:
                 print(final_answer)
                 print("========================================\n")
 
+                delegation_request = None
+                if self.config.name == "buyer_agent" and any(token in lowered for token in ["where is my order", "track my order", "status of my order", "refund", "return"]):
+                    delegation_request = self._build_delegation_request(
+                        "customer_agent",
+                        "Need current order or fulfillment status for this customer.",
+                        "Look up order status or refund details for the customer.",
+                        ["customer_id", "order_id"],
+                    )
+                elif self.config.name == "buyer_agent" and self._is_product_search(user_message) and not products:
+                    delegation_request = self._build_delegation_request(
+                        "catalog_agent",
+                        "Need product discovery and catalog comparison before recommending an offer.",
+                        "Research product options and pricing for the current shopping request.",
+                        ["message", "customer_id"],
+                    )
+
                 return {
+                    "status": "completed" if delegation_request is None else "delegation_required",
                     "reply": final_answer,
                     "products": products,
+                    "data": {"source": "llm_response"},
+                    "actions": ["respond"],
+                    "tool_calls": [],
+                    "delegation_request": delegation_request,
                 }
 
             # IMPORTANT:
@@ -198,6 +297,9 @@ class BaseAgent:
                 print(args)
 
                 try:
+                    if tool_name not in self.config.allowed_tools:
+                        raise ValueError(f"Tool '{tool_name}' is not allowed for {self.config.name}")
+
                     result = await run_tool(
                         db,
                         actor=self.config.name,
@@ -205,7 +307,7 @@ class BaseAgent:
                         arguments=args,
                     )
 
-                     # Preserve search results for the frontend.
+                    # Preserve search results for the frontend.
                     if tool_name == "search_web" and result.get("ok"):
                         search_products = result.get("products") or normalize_search_results(result.get("result"))
                         for product in search_products:
@@ -236,6 +338,11 @@ class BaseAgent:
         print("\nMAXIMUM TOOL TURNS REACHED\n")
 
         return {
+            "status": "failed",
             "reply": "I wasn't able to complete this in the allotted number of steps.",
             "products": products,
+            "data": {"source": "max_tool_turns"},
+            "actions": ["retry_later"],
+            "tool_calls": [],
+            "delegation_request": None,
         }

@@ -4,6 +4,8 @@ campaign_agent = BaseAgent(AgentConfig(
     name="campaign_agent",
     backend="groq",
     delegation_scope=[],
+    allowed_tools=[],
+    allowed_delegations=set(),
     system_prompt=(
         "You are the AI Commerce Copilot campaign agent. You execute outreach "
         "campaigns proposed by the growth agent by calling the notification "

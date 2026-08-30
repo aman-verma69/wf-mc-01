@@ -41,6 +41,15 @@ AGENT_BY_INTENT = {
 }
 
 MAX_DELEGATION_DEPTH = 2
+MAX_WORKFLOW_TURNS = 5
+ALLOWED_DELEGATIONS = {
+    "buyer": {"catalog", "customer"},
+    "catalog": {"buyer"},
+    "customer": {"buyer"},
+    "analytics": {"growth"},
+    "growth": {"campaign"},
+    "campaign": set(),
+}
 
 
 class RouteEvent(Event):
@@ -79,6 +88,8 @@ class CommerceWorkflow(Workflow):
             "customer_id": None,
             "intent": "general",
             "selected_agent": None,
+            "active_agent": None,
+            "completed_agents": [],
             "selected_products": [],
             "products": [],
             "cart": {"items": [], "total_paise": 0},
@@ -90,6 +101,9 @@ class CommerceWorkflow(Workflow):
             "workflow_turns": 0,
             "delegation_depth": 0,
             "previous_agent_outputs": [],
+            "errors": [],
+            "status": "initialized",
+            "last_action": None,
         }
 
     @staticmethod
@@ -103,6 +117,17 @@ class CommerceWorkflow(Workflow):
             return AGENT_BY_INTENT[intent]
 
         return "buyer"
+
+    @staticmethod
+    def _is_delegation_allowed(source_agent: str, target_agent: str) -> bool:
+        return target_agent in ALLOWED_DELEGATIONS.get(source_agent, set()) or source_agent == target_agent
+
+    @staticmethod
+    def _has_seen_delegation(state: dict[str, Any], source_agent: str, target_agent: str) -> bool:
+        for item in state.get("delegation_history", []):
+            if item.get("from") == source_agent and item.get("to") == target_agent:
+                return True
+        return False
 
     @step
     async def route(self, ctx: Context, ev: StartEvent) -> RouteEvent:
@@ -120,6 +145,9 @@ class CommerceWorkflow(Workflow):
         inferred_agent = self._infer_agent_key(agent_key, message)
         state["intent"] = classify_intent(agent_key, message)
         state["selected_agent"] = inferred_agent
+        state["active_agent"] = inferred_agent
+        state["status"] = "routing"
+        state["last_action"] = "intent_detected"
         state["delegation_history"] = state.get("delegation_history", [])
         state["delegation_history"].append(
             {"from": "workflow", "to": inferred_agent, "intent": state["intent"]}
@@ -140,28 +168,83 @@ class CommerceWorkflow(Workflow):
         state = ev.workflow_state or await self._get_state(ctx)
         await ctx.store.set("workflow_state", state)
 
-        if state.get("delegation_depth", 0) >= MAX_DELEGATION_DEPTH:
+        if state.get("workflow_turns", 0) >= MAX_WORKFLOW_TURNS:
+            state["status"] = "failed"
+            state["last_action"] = "workflow_limit_reached"
+            await ctx.store.set("workflow_state", state)
             return StopEvent(
                 result={
                     "agent": ev.agent_key,
-                    "reply": "The workflow has reached its delegation limit for this request.",
-                    "products": [],
+                    "reply": "The workflow has reached its maximum execution turn limit for this request.",
+                    "products": state.get("products", []),
                     "workflow_state": state,
                     "ok": False,
-                    "error": "delegation_limit_reached",
+                    "error": "workflow_limit_reached",
                 }
             )
 
         if ev.agent_key not in AGENTS:
             raise ValueError(f"Unknown agent_key: {ev.agent_key}. Valid: {list(AGENTS)}")
 
-        state["delegation_depth"] = int(state.get("delegation_depth", 0)) + 1
+        state["delegation_depth"] = int(state.get("delegation_depth", 0))
         state["workflow_turns"] = int(state.get("workflow_turns", 0)) + 1
         state["selected_agent"] = ev.agent_key
+        state["active_agent"] = ev.agent_key
+        state["status"] = "agent_running"
+        state["last_action"] = "agent_selected"
         await ctx.store.set("workflow_state", state)
 
         agent = AGENTS[ev.agent_key]
         result = await agent.run(db, ev.message, history=state.get("history", []), workflow_state=state)
+
+        delegation_request = result.get("delegation_request")
+        if delegation_request:
+            target_agent = delegation_request.get("target_agent")
+            if target_agent not in AGENTS:
+                state["errors"].append({"type": "unknown_target_agent", "agent": target_agent})
+                return StopEvent(result={"agent": ev.agent_key, "reply": "The requested delegated capability is not available.", "products": state.get("products", []), "workflow_state": state, "ok": False, "error": "unknown_target_agent"})
+
+            if not self._is_delegation_allowed(ev.agent_key, target_agent):
+                state["errors"].append({"type": "delegation_denied", "source": ev.agent_key, "target": target_agent})
+                return StopEvent(result={"agent": ev.agent_key, "reply": "The requested delegated capability is not allowed for this workflow step.", "products": state.get("products", []), "workflow_state": state, "ok": False, "error": "delegation_denied"})
+
+            if state.get("delegation_depth", 0) >= MAX_DELEGATION_DEPTH:
+                state["errors"].append({"type": "delegation_limit_reached", "source": ev.agent_key, "target": target_agent})
+                return StopEvent(result={"agent": ev.agent_key, "reply": "The workflow has reached its delegation limit for this request.", "products": state.get("products", []), "workflow_state": state, "ok": False, "error": "delegation_limit_reached"})
+
+            if self._has_seen_delegation(state, ev.agent_key, target_agent):
+                state["errors"].append({"type": "delegation_loop", "source": ev.agent_key, "target": target_agent})
+                return StopEvent(result={"agent": ev.agent_key, "reply": "The workflow detected a repeated delegation loop and stopped the request.", "products": state.get("products", []), "workflow_state": state, "ok": False, "error": "delegation_loop"})
+
+            state["delegation_depth"] = int(state.get("delegation_depth", 0)) + 1
+            state["delegation_history"].append({"from": ev.agent_key, "to": target_agent, "reason": delegation_request.get("reason"), "task": delegation_request.get("task")})
+            state["active_agent"] = target_agent
+            state["last_action"] = "delegation_requested"
+            state["history"].append({"role": "assistant", "content": result.get("reply", "")})
+            await ctx.store.set("workflow_state", state)
+
+            delegated_agent = AGENTS[target_agent]
+            delegated_result = await delegated_agent.run(db, delegation_request.get("task"), history=state.get("history", []), workflow_state=state)
+
+            state["history"].append({"role": "assistant", "content": delegated_result.get("reply", "")})
+            state["selected_products"] = delegated_result.get("products", []) or result.get("products", [])
+            state["products"] = state["selected_products"]
+            state["completed_agents"] = list(dict.fromkeys(state.get("completed_agents", []) + [ev.agent_key, target_agent]))
+            state["last_result"] = delegated_result
+            state["status"] = "delegation_completed"
+            state["last_action"] = "delegated_result_returned"
+            await ctx.store.set("workflow_state", state)
+
+            return StopEvent(
+                result={
+                    "agent": ev.agent_key,
+                    "reply": delegated_result.get("reply") or result.get("reply", ""),
+                    "products": state["products"],
+                    "workflow_state": state,
+                    "ok": delegated_result.get("ok", True),
+                    "error": delegated_result.get("error"),
+                }
+            )
 
         state["history"] = state.get("history", [])
         state["history"].append({"role": "assistant", "content": result.get("reply", "")})
@@ -169,10 +252,18 @@ class CommerceWorkflow(Workflow):
         state["products"] = result.get("products", [])
         if result.get("products"):
             state["cart"]["items"] = result["products"]
+
+        tool_trace = result.get("data", {}).get("tool_trace") or []
+        if tool_trace:
+            state["tool_trace"] = state.get("tool_trace", []) + tool_trace
+
         state["last_agent"] = ev.agent_key
         state["last_result"] = result
+        state["completed_agents"] = list(dict.fromkeys(state.get("completed_agents", []) + [ev.agent_key]))
         state["previous_agent_outputs"] = state.get("previous_agent_outputs", [])
         state["previous_agent_outputs"].append({"agent": ev.agent_key, "result": result})
+        state["status"] = "completed"
+        state["last_action"] = "workflow_completed"
         await ctx.store.set("workflow_state", state)
 
         return StopEvent(
@@ -181,7 +272,7 @@ class CommerceWorkflow(Workflow):
                 "reply": result.get("reply", ""),
                 "products": result.get("products", []),
                 "workflow_state": state,
-                "ok": True,
-                "error": None,
+                "ok": result.get("ok", True),
+                "error": result.get("error"),
             }
         )

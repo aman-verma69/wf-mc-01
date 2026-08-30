@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from llama_index.core.workflow import Context, StartEvent
 
+from backend.agents.base_agent import AgentConfig, BaseAgent
 from backend.main import app
 from backend.tools.commerce_tools import normalize_search_results, run_tool
 from backend.workflows.commerce_workflow import AGENTS, CommerceWorkflow, RouteEvent
@@ -163,6 +164,53 @@ def test_missing_catalog_images_do_not_get_fabricated():
     assert products[0]["product_url"] == "https://example.com/boat-rockerz-450"
 
 
+def test_article_and_guide_results_are_filtered_out_of_products():
+    raw = {
+        "results": [
+            {
+                "title": "Best Gaming Headphones Under 5000 in 2024",
+                "url": "https://example.com/blog/best-gaming-headphones-under-5000",
+                "source": "techblog.in",
+                "content": "Buying guide for gaming headsets under ₹5000 in India.",
+                "score": 0.95,
+            },
+            {
+                "title": "Sony WH-CH520",
+                "url": "https://example.com/sony-wh-ch520",
+                "source": "headphonezone.in",
+                "content": "Wireless headphones ₹3,990. Available in stock.",
+                "thumbnail": "https://example.com/sony.jpg",
+                "score": 0.9,
+            },
+        ]
+    }
+
+    products = normalize_search_results(raw)
+
+    assert len(products) == 1
+    assert products[0]["name"] == "Sony WH-CH520"
+    assert products[0]["price"] == 3990
+    assert products[0]["image_url"] == "https://example.com/sony.jpg"
+
+
+def test_budget_ceiling_is_not_used_as_price_when_no_real_price_exists():
+    raw = {
+        "results": [
+            {
+                "title": "10 Best Gaming Headphones Under 5000 In India",
+                "url": "https://example.com/articles/10-best-gaming-headphones-under-5000",
+                "source": "techroundup.in",
+                "content": "A comparison shopping guide for gaming headsets under ₹5000.",
+                "score": 0.9,
+            }
+        ]
+    }
+
+    products = normalize_search_results(raw)
+
+    assert products == []
+
+
 def test_chat_api_propagates_customer_id(monkeypatch):
     captured = {}
 
@@ -209,6 +257,195 @@ def test_run_tool_passes_delegation_scope_to_checkout_guardrail():
         assert mocked.await_args.kwargs["delegation_scope"] == ["checkout"]
 
     asyncio.run(_assertion())
+
+
+def test_search_web_handles_connection_error_gracefully():
+    with patch("backend.tools.commerce_tools.tavily_search", return_value={"results": [], "error": {"type": "ConnectionError", "code": "product_search_unavailable", "message": "Live product search is temporarily unavailable. Please try again shortly.", "retryable": True}}):
+        result = asyncio.run(
+            run_tool(
+                None,
+                actor="buyer_agent",
+                name="search_web",
+                arguments={"query": "wireless headphones under 5000"},
+            )
+        )
+
+    assert result["ok"] is False
+    assert result["error"] == "product_search_unavailable"
+    assert result["retryable"] is True
+    assert "temporarily unavailable" in result["reason"]
+
+
+def test_search_web_successful_search_with_zero_verified_products_keeps_ok_true():
+    with patch("backend.tools.commerce_tools.tavily_search", return_value={"results": [{"title": "Best Gaming Headphones Under 5000 in 2024", "url": "https://example.com/best-gaming-headphones-under-5000", "source": "techblog.in", "content": "Buying guide for gaming headsets under ₹5000 in India.", "score": 0.95}]}):
+        result = asyncio.run(
+            run_tool(
+                None,
+                actor="buyer_agent",
+                name="search_web",
+                arguments={"query": "Compare the best wireless headphones under ₹5000 for gaming"},
+            )
+        )
+
+    assert result["ok"] is True
+    assert result["error"] is None
+    assert result["products"] == []
+
+
+def test_search_web_timeout_provider_failure_uses_stable_error_code():
+    with patch("backend.tools.commerce_tools.tavily_search", side_effect=TimeoutError("provider timed out")):
+        result = asyncio.run(
+            run_tool(
+                None,
+                actor="buyer_agent",
+                name="search_web",
+                arguments={"query": "wireless headphones under 5000"},
+            )
+        )
+
+    assert result["ok"] is False
+    assert result["error"] == "product_search_unavailable"
+    assert result["products"] == []
+
+
+def test_agent_run_successful_search_with_zero_verified_products_keeps_ok_true():
+    async def fake_run_tool(*args, **kwargs):
+        return {
+            "ok": True,
+            "error": None,
+            "result": {"results": [{"title": "Best Gaming Headphones Under 5000 in 2024", "url": "https://example.com/best", "source": "techblog.in", "content": "Buying guide for gaming headsets under ₹5000.", "score": 0.95}]},
+            "products": [],
+        }
+
+    async def _run():
+        agent = BaseAgent(
+            AgentConfig(
+                name="buyer_agent",
+                system_prompt="You are the AI Commerce Copilot buyer agent.",
+                backend="groq",
+                allowed_tools=["search_web"],
+                allowed_delegations={"catalog", "customer"},
+            )
+        )
+        return await agent.run(
+            None,
+            "Compare the best wireless headphones under ₹5000 for gaming",
+            history=[],
+            workflow_state={},
+        )
+
+    with patch("backend.agents.base_agent.run_tool", side_effect=fake_run_tool):
+        result = asyncio.run(_run())
+
+    assert result["ok"] is True
+    assert result["error"] is None
+    assert result["products"] == []
+    assert "verified as individual product matches" in result["reply"].lower()
+
+
+def test_tavily_search_retries_and_stops_after_bound():
+    with patch("backend.integrations.tavily.client.get_tavily_client") as get_client:
+        client = get_client.return_value
+        client.search.side_effect = [ConnectionError("reset"), ConnectionError("reset"), {"results": [{"title": "A", "url": "https://example.com/a", "content": "₹2,999", "source": "demo"}]}]
+
+        result = asyncio.run(asyncio.to_thread(lambda: None))
+        search_response = __import__("backend.integrations.tavily.client", fromlist=["search"]).search("wireless headphones")
+
+    assert search_response["results"][0]["title"] == "A"
+    assert client.search.call_count == 3
+
+
+def test_fastapi_endpoint_handles_tavily_connection_error_without_500(monkeypatch):
+    async def fake_run(self, *, db, message, agent_key=None, customer_id=None):
+        return {
+            "agent": "buyer_agent",
+            "reply": "I couldn't reach the live product catalog right now. Please try again in a moment.",
+            "products": [],
+            "ok": True,
+            "error": None,
+        }
+
+    monkeypatch.setattr(CommerceWorkflow, "run", fake_run)
+    client = TestClient(app)
+    response = client.post("/api/v1/agents/chat", json={"message": "Find me wireless headphones under ₹5000 and compare the best options for gaming", "customer_id": "cust-42"})
+
+    assert response.status_code == 200
+    assert "temporarily unavailable" in response.json()["reply"] or "live product catalog" in response.json()["reply"]
+
+
+def test_agent_run_handles_empty_genuine_product_results_gracefully():
+    async def fake_run_tool(*args, **kwargs):
+        return {
+            "ok": True,
+            "result": {"results": []},
+            "products": [],
+        }
+
+    async def _run():
+        agent = BaseAgent(
+            AgentConfig(
+                name="buyer_agent",
+                system_prompt="You are the AI Commerce Copilot buyer agent.",
+                backend="groq",
+                allowed_tools=["search_web"],
+                allowed_delegations={"catalog", "customer"},
+            )
+        )
+        return await agent.run(
+            None,
+            "Find me wireless headphones under ₹5000 and compare the best options for gaming",
+            history=[],
+            workflow_state={},
+        )
+
+    with patch("backend.agents.base_agent.run_tool", side_effect=fake_run_tool):
+        result = asyncio.run(_run())
+
+    assert result["status"] == "completed"
+    assert result["products"] == []
+    assert result["ok"] is True
+    assert result["error"] is None
+    assert "verified as individual product matches" in result["reply"].lower()
+
+
+def test_product_search_reply_compares_real_candidates():
+    async def fake_run_tool(*args, **kwargs):
+        return {
+            "ok": True,
+            "result": {"results": [
+                {"title": "Sony WH-CH520", "url": "https://example.com/sony-wh-ch520", "source": "headphonezone.in", "content": "Wireless headphones ₹3,990", "thumbnail": "https://example.com/sony.jpg"},
+                {"title": "boAt Rockerz 450", "url": "https://example.com/boat-rockerz-450", "source": "boat-lifestyle.com", "content": "Wireless headphones ₹2,499", "thumbnail": "https://example.com/boat.jpg"},
+            ]},
+            "products": [
+                {"id": "sony", "name": "Sony WH-CH520", "price": 3990, "currency": "INR", "image_url": "https://example.com/sony.jpg", "source": "headphonezone.in", "product_url": "https://example.com/sony-wh-ch520", "availability": "in_stock", "metadata": {}},
+                {"id": "boat", "name": "boAt Rockerz 450", "price": 2499, "currency": "INR", "image_url": "https://example.com/boat.jpg", "source": "boat-lifestyle.com", "product_url": "https://example.com/boat-rockerz-450", "availability": "in_stock", "metadata": {}},
+            ],
+        }
+
+    async def _run():
+        agent = BaseAgent(
+            AgentConfig(
+                name="buyer_agent",
+                system_prompt="You are the AI Commerce Copilot buyer agent.",
+                backend="groq",
+                allowed_tools=["search_web"],
+                allowed_delegations={"catalog", "customer"},
+            )
+        )
+        return await agent.run(
+            None,
+            "Find me wireless headphones under ₹5000 and compare the best options for gaming",
+            history=[],
+            workflow_state={},
+        )
+
+    with patch("backend.agents.base_agent.run_tool", side_effect=fake_run_tool):
+        result = asyncio.run(_run())
+
+    assert result["status"] == "completed"
+    assert result["products"][0]["name"] == "Sony WH-CH520"
+    assert "compare" in result["reply"].lower()
+    assert "sony" in result["reply"].lower() or "boat" in result["reply"].lower()
 
 
 def test_workflow_dispatch_keeps_products_in_result_payload(monkeypatch):

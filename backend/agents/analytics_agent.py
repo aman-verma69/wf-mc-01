@@ -4,6 +4,8 @@ analytics_agent = BaseAgent(AgentConfig(
     name="analytics_agent",
     backend="groq",
     delegation_scope=[],
+    allowed_tools=[],
+    allowed_delegations={"growth"},
     system_prompt=(
         "You are the AI Commerce Copilot analytics agent. You interpret and "
         "narrate e-commerce metrics for a human reader. You do NOT compute "

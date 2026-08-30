@@ -19,6 +19,24 @@ class AgentChatRequest(BaseModel):
     customer_id: str | None = None
 
 
+class DelegationRequest(BaseModel):
+    type: str = "delegation_request"
+    target_agent: str
+    reason: str
+    task: str
+    context_keys: list[str] = []
+
+
+class AgentResult(BaseModel):
+    status: str = "completed"
+    reply: str
+    products: list[ProductCard] = []
+    data: dict = {}
+    actions: list[str] = []
+    tool_calls: list[str] = []
+    delegation_request: DelegationRequest | None = None
+
+
 class AgentChatResponse(BaseModel):
     agent: str
     reply: str

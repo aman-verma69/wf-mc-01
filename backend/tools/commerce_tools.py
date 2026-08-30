@@ -17,23 +17,109 @@ from backend.integrations.tavily.client import search as tavily_search
 from backend.services.checkout_service import CheckoutAwaitingConfirmation, CheckoutBlocked, initiate_checkout
 
 
+PRODUCT_KEYWORDS = {
+    "headphone",
+    "headphones",
+    "earbud",
+    "earbuds",
+    "earphone",
+    "earphones",
+    "speaker",
+    "smartwatch",
+    "watch",
+    "laptop",
+    "phone",
+    "tablet",
+    "mouse",
+    "keyboard",
+    "monitor",
+    "camera",
+    "shoe",
+    "shirt",
+    "bag",
+    "charger",
+    "adapter",
+}
+
+ARTICLE_TOKENS = (
+    "best",
+    "top",
+    "guide",
+    "buying",
+    "review",
+    "reviews",
+    "comparison",
+    "compare",
+    "ranking",
+    "rankings",
+    "list",
+    "roundup",
+    "article",
+    "blog",
+    "under",
+    "under 5000",
+)
+
+
+def _is_article_like(title: str, url: str | None, content: str | None) -> bool:
+    text = " ".join(filter(None, [title, content or "", url or ""])).lower()
+    if not text:
+        return True
+
+    parsed = urlparse(url or "")
+    path = (parsed.path or "").lower()
+    if any(token in path for token in ("blog", "article", "guide", "review", "comparison", "list", "best-")):
+        return True
+
+    title_tokens = re.split(r"[^a-z0-9]+", title.lower())
+    if any(token in title_tokens for token in ("best", "top", "guide", "review", "comparison", "blog", "rankings", "roundup", "list")):
+        return True
+
+    if re.search(r"\b(?:best|top|guide|review|comparison|buying|list|roundup)\b.*\b(?:headphone|earbud|phone|laptop|shoe|shirt)\b", text):
+        return True
+
+    if re.search(r"\b(?:under|below|within|upto|up to|less than|budget)\s*(?:rs\.?|inr|₹)?\s*\d+(?:[\s,\.]\d+)*\b", text):
+        if "₹" not in text and "rs" not in text and "inr" not in text:
+            return True
+
+    return False
+
+
 def extract_inr_price(value: str | None) -> int | None:
     """Extract a price in INR currency units (not paise) from a raw string."""
     if not value:
         return None
 
     text = value.lower().replace("₹", "rs ")
-    match = re.search(r"(?:rs\.?|inr)\s*([0-9][0-9,]*(?:\.\d+)?)", text)
-    if not match:
-        match = re.search(r"([0-9][0-9,]*(?:\.\d+)?)\s*(?:rs|inr)", text)
-    if not match:
-        return None
 
-    num = match.group(1).replace(",", "")
-    try:
-        return int(float(num))
-    except ValueError:
-        return None
+    for pattern in (
+        r"(?:rs\.?|inr)\s*([0-9][0-9,]*(?:\.\d+)?)",
+        r"(?:price|mrp|m\.r\.p|starts at|from|at)\s*(?:rs\.?|inr)?\s*([0-9][0-9,]*(?:\.\d+)?)",
+    ):
+        match = re.search(pattern, text)
+        if match:
+            num = match.group(1).replace(",", "")
+            try:
+                return int(float(num))
+            except ValueError:
+                return None
+
+    return None
+
+
+def _is_product_like(title: str, content: str | None, url: str | None) -> bool:
+    text = " ".join(filter(None, [title, content or "", url or ""])).lower()
+    if not text:
+        return False
+
+    if _is_article_like(title, url, content):
+        return False
+
+    has_product_keyword = any(token in text for token in PRODUCT_KEYWORDS)
+    has_model_signal = bool(re.search(r"\b[a-z0-9]+[-_][a-z0-9]+\b|\b(?:wh|air|rockerz|elite|x|e|m|a)[a-z0-9-]+\b", title.lower()))
+    has_merchant_signal = bool(url and "/" in url and not any(token in (urlparse(url).path or "").lower() for token in ("blog", "article", "guide", "review", "compare", "list")))
+
+    return has_product_keyword or has_model_signal or has_merchant_signal
 
 
 def normalize_search_results(search_response: dict | None) -> list[dict]:
@@ -48,10 +134,16 @@ def normalize_search_results(search_response: dict | None) -> list[dict]:
         if not isinstance(item, dict):
             continue
 
-        title = (item.get("title") or "Product").strip()
+        title = (item.get("title") or "").strip()
         url = item.get("url")
         content = item.get("content") or ""
         source = item.get("source") or (urlparse(url).netloc if url else "search")
+
+        if not title:
+            continue
+        if not _is_product_like(title, content, url):
+            continue
+
         image_url = item.get("image_url") or item.get("thumbnail") or (search_response.get("images") or [None])[0]
         price = item.get("price")
         if price is None:
@@ -61,6 +153,9 @@ def normalize_search_results(search_response: dict | None) -> list[dict]:
                 price = int(float(str(price).replace(",", "")))
             except (TypeError, ValueError):
                 price = extract_inr_price(str(price))
+
+        if price is None and re.search(r"\b(?:under|below|within|upto|up to|less than|budget)\s*(?:rs\.?|inr|₹)?\s*\d+(?:[\s,\.]\d+)*\b", f"{title} {content}", flags=re.IGNORECASE):
+            price = None
 
         availability = "unknown"
         text = f"{title} {content}".lower()
@@ -74,13 +169,15 @@ def normalize_search_results(search_response: dict | None) -> list[dict]:
             "name": title,
             "price": int(price) if isinstance(price, (int, float)) else None,
             "currency": "INR",
-            "image_url": image_url,
+            "image_url": image_url if isinstance(image_url, str) and image_url.startswith(("http://", "https://")) else None,
             "source": source,
             "product_url": url,
             "availability": availability,
             "metadata": {
                 "content": content[:500],
                 "score": item.get("score"),
+                "is_product_candidate": True,
+                "source_type": "product",
             },
         }
         products.append(product)
@@ -133,9 +230,34 @@ async def run_tool(
     after an agent's LLM response includes a tool_call.
     """
     if name == "search_web":
-        result = tavily_search(arguments["query"])
+        try:
+            result = tavily_search(arguments["query"])
+        except Exception as exc:  # pragma: no cover - safety net for network failures
+            result = {
+                "results": [],
+                "error": {
+                    "type": type(exc).__name__,
+                    "code": "product_search_unavailable",
+                    "message": "Live product search is temporarily unavailable. Please try again shortly.",
+                    "retryable": True,
+                },
+            }
+
+        if result.get("error"):
+            error = result["error"]
+            error_code = error.get("code") or "product_search_unavailable"
+            return {
+                "ok": False,
+                "error": error_code,
+                "result": result,
+                "products": [],
+                "reason": error.get("message"),
+                "retryable": error.get("retryable", False),
+                "error_type": error.get("type"),
+            }
+
         products = normalize_search_results(result)
-        return {"ok": True, "result": result, "products": products}
+        return {"ok": True, "error": None, "result": result, "products": products}
 
     if name == "initiate_checkout":
         try:
