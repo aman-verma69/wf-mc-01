@@ -4,12 +4,24 @@ import { Send } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/Button";
 import { sendAgentMessage } from "@/lib/api";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, Product } from "@/lib/types";
+
+function formatPrice(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "Price unavailable";
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(numeric)) return "Price unavailable";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(numeric);
+}
 
 export function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: "assistant", content: "I can help you find products and check out. What are you looking for?" },
   ]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +41,8 @@ export function ChatPanel() {
         customerId: "cust_demo",
         history: messages,
       });
+      setProducts(res.products ?? []);
+
       if (res.reply) {
         setMessages((m) => [
           ...m,
@@ -37,8 +51,7 @@ export function ChatPanel() {
       } else {
         setError("The agent returned an empty response.");
       }
-      }
-      catch (e) {
+    } catch (e) {
       setError(
         e instanceof Error
           ? `Couldn't reach the backend — ${e.message}`
@@ -56,7 +69,7 @@ export function ChatPanel() {
         <span className="text-[11px] font-mono text-ink-400">gpt-oss-20b</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
@@ -68,6 +81,49 @@ export function ChatPanel() {
             </div>
           </div>
         ))}
+
+        {products.length > 0 && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {products.map((product) => (
+              <a
+                key={product.id ?? `${product.name}-${product.product_url ?? "item"}`}
+                href={product.product_url ?? "#"}
+                target={product.product_url ? "_blank" : undefined}
+                rel={product.product_url ? "noreferrer" : undefined}
+                className="block rounded-md border border-border bg-surface2 overflow-hidden hover:border-brass/50 transition-colors"
+              >
+                <div className="h-36 bg-surface flex items-center justify-center overflow-hidden">
+                  {product.image_url ? (
+                    <img src={product.image_url} alt={product.name} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="text-xs font-mono text-ink-400 px-3 text-center">No image</div>
+                  )}
+                </div>
+                <div className="p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-medium text-ink-50 line-clamp-2">{product.name}</p>
+                    <span className="text-[11px] font-mono text-ink-300">{product.source ?? "catalog"}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-base font-semibold text-brass">{formatPrice(product.price)}</span>
+                    <span className="text-[11px] uppercase tracking-wide text-ink-300">{product.availability ?? "unknown"}</span>
+                  </div>
+                  {product.metadata && Object.keys(product.metadata).length > 0 && (
+                    <div className="text-[11px] text-ink-300 space-y-1">
+                      {Object.entries(product.metadata).slice(0, 2).map(([key, value]) => (
+                        <div key={key} className="flex justify-between gap-2">
+                          <span className="text-ink-400">{key}</span>
+                          <span className="text-right text-ink-200">{String(value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
+
         {loading && <p className="text-xs font-mono text-ink-400">buyer_agent is thinking…</p>}
         {error && (
           <div className="rounded-md border border-blocked/30 bg-blocked/10 px-3 py-2 text-xs text-blocked">

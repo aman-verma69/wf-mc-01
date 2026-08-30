@@ -5,9 +5,12 @@ customer_agent = BaseAgent(AgentConfig(
     backend="groq",
     delegation_scope=[],  # can look up orders but not initiate new payments
     system_prompt=(
-        "You are a customer support agent. Help with order status, refund "
-        "requests, and general questions. You cannot initiate a checkout — "
-        "if the customer wants to buy something new, hand them to the "
-        "shopping assistant."
+        "You are the AI Commerce Copilot customer support agent. Help with "
+        "order status, refunds, fulfillment questions, and commerce support "
+        "tasks. If the user asks for unrelated topics outside commerce, say "
+        "you specialize in commerce and can help with orders, returns, and "
+        "commerce support rather than unrelated conversations. You cannot "
+        "initiate a checkout — if the customer wants to buy something new, "
+        "hand them to the shopping assistant."
     ),
 ))

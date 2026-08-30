@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.integrations.llm.gpt_oss_client import gpt_oss_chat
 from backend.integrations.llm.groq_client import groq_chat
-from backend.tools.commerce_tools import TOOL_SCHEMAS, run_tool
+from backend.tools.commerce_tools import TOOL_SCHEMAS, normalize_search_results, run_tool
 
 
 LLMBackend = Literal["groq", "gpt-oss"]
@@ -43,12 +43,37 @@ class BaseAgent:
             tools=self.config.tool_schemas,
         )
 
+    @staticmethod
+    def _is_product_search(message: str) -> bool:
+        lowered = (message or "").lower()
+        if not lowered:
+            return False
+        search_tokens = [
+            "show me",
+            "find",
+            "search",
+            "look for",
+            "compare",
+            "recommend",
+            "under",
+            "below",
+            "budget",
+            "headphones",
+            "earbuds",
+            "phone",
+            "laptop",
+            "shoe",
+            "shirt",
+        ]
+        return any(token in lowered for token in search_tokens)
+
     async def run(
         self,
         db: AsyncSession,
         user_message: str,
         history: list[dict] | None = None,
         max_turns: int = 4,
+        workflow_state: dict | None = None,
     ) -> dict:
 
         messages = [
@@ -80,7 +105,23 @@ class BaseAgent:
             }
         )
 
-        products = []
+        products: list[dict] = []
+
+        if self._is_product_search(user_message):
+            search_result = await run_tool(
+                db,
+                actor=self.config.name,
+                name="search_web",
+                arguments={"query": user_message},
+            )
+            if search_result.get("ok"):
+                search_products = search_result.get("products") or normalize_search_results(search_result.get("result"))
+                if search_products:
+                    products.extend(search_products)
+                    return {
+                        "reply": "I found a few options that match your request.",
+                        "products": products,
+                    }
 
         # Tool-calling loop.
         for turn in range(max_turns):
@@ -166,17 +207,9 @@ class BaseAgent:
 
                      # Preserve search results for the frontend.
                     if tool_name == "search_web" and result.get("ok"):
-                        search_data = result.get("result", {})
-
-                        for item in search_data.get("results", []):
-                            products.append(
-                                {
-                                    "name": item.get("title", "Unknown product"),
-                                    "price": None,
-                                    "image_url": None,
-                                    "url": item.get("url"),
-                                }
-                            )
+                        search_products = result.get("products") or normalize_search_results(result.get("result"))
+                        for product in search_products:
+                            products.append(product)
 
                     print("\nTOOL RESULT:")
                     print(result)

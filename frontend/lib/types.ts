@@ -44,9 +44,22 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface Product {
+  id?: string | null;
+  name: string;
+  price?: number | string | null;
+  currency?: string;
+  image_url?: string | null;
+  source?: string;
+  product_url?: string | null;
+  availability?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface AgentChatResponse {
   agent: string;
   reply: string;
+  products: Product[];
   ok: boolean;
   error?: string | null;
 }

@@ -8,10 +8,84 @@ not here.
 These are the OpenAI/Grok-style tool schemas + their Python implementations,
 used by backend/agents/*.
 """
+import re
+from urllib.parse import urlparse
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.integrations.tavily.client import search as tavily_search
 from backend.services.checkout_service import CheckoutAwaitingConfirmation, CheckoutBlocked, initiate_checkout
+
+
+def extract_inr_price(value: str | None) -> int | None:
+    """Extract a price in INR currency units (not paise) from a raw string."""
+    if not value:
+        return None
+
+    text = value.lower().replace("₹", "rs ")
+    match = re.search(r"(?:rs\.?|inr)\s*([0-9][0-9,]*(?:\.\d+)?)", text)
+    if not match:
+        match = re.search(r"([0-9][0-9,]*(?:\.\d+)?)\s*(?:rs|inr)", text)
+    if not match:
+        return None
+
+    num = match.group(1).replace(",", "")
+    try:
+        return int(float(num))
+    except ValueError:
+        return None
+
+
+def normalize_search_results(search_response: dict | None) -> list[dict]:
+    """Normalize Tavily search results into the app's strict product card shape."""
+    if not isinstance(search_response, dict):
+        return []
+
+    results = search_response.get("results") or []
+    products: list[dict] = []
+
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+
+        title = (item.get("title") or "Product").strip()
+        url = item.get("url")
+        content = item.get("content") or ""
+        source = item.get("source") or (urlparse(url).netloc if url else "search")
+        image_url = item.get("image_url") or item.get("thumbnail") or (search_response.get("images") or [None])[0]
+        price = item.get("price")
+        if price is None:
+            price = extract_inr_price(f"{title} {content}")
+        else:
+            try:
+                price = int(float(str(price).replace(",", "")))
+            except (TypeError, ValueError):
+                price = extract_inr_price(str(price))
+
+        availability = "unknown"
+        text = f"{title} {content}".lower()
+        if "out of stock" in text or "sold out" in text:
+            availability = "out_of_stock"
+        elif "in stock" in text or "available" in text:
+            availability = "in_stock"
+
+        product = {
+            "id": item.get("id") or str(url or title),
+            "name": title,
+            "price": int(price) if isinstance(price, (int, float)) else None,
+            "currency": "INR",
+            "image_url": image_url,
+            "source": source,
+            "product_url": url,
+            "availability": availability,
+            "metadata": {
+                "content": content[:500],
+                "score": item.get("score"),
+            },
+        }
+        products.append(product)
+
+    return products
 
 TOOL_SCHEMAS = [
     {
@@ -47,13 +121,21 @@ TOOL_SCHEMAS = [
 ]
 
 
-async def run_tool(db: AsyncSession, *, actor: str, name: str, arguments: dict) -> dict:
+async def run_tool(
+    db: AsyncSession,
+    *,
+    actor: str,
+    name: str,
+    arguments: dict,
+    delegation_scope: list[str] | None = None,
+) -> dict:
     """Dispatch a tool call by name. Called from workflows/commerce_workflow.py
     after an agent's LLM response includes a tool_call.
     """
     if name == "search_web":
         result = tavily_search(arguments["query"])
-        return {"ok": True, "result": result}
+        products = normalize_search_results(result)
+        return {"ok": True, "result": result, "products": products}
 
     if name == "initiate_checkout":
         try:
@@ -63,6 +145,7 @@ async def run_tool(db: AsyncSession, *, actor: str, name: str, arguments: dict) 
                 customer_id=arguments["customer_id"],
                 amount_paise=arguments["amount_paise"],
                 cart_snapshot=arguments["cart_snapshot"],
+                delegation_scope=delegation_scope,
             )
             return {"ok": True, "order_id": order.id, "status": order.status.value}
         except CheckoutBlocked as e:
