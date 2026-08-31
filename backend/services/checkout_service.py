@@ -9,6 +9,7 @@ from backend.audit.audit_logger import log_action
 from backend.database.models import Order, OrderStatus
 from backend.integrations.razorpay.client import create_order
 from backend.policy.guardrail import CheckoutRequest, GateDecision, check_checkout_request
+from backend.services.cart_service import calculate_cart_total_paise
 
 
 class CheckoutBlocked(Exception):
@@ -31,19 +32,28 @@ async def initiate_checkout(
     *,
     actor: str,
     customer_id: str,
-    amount_paise: int,
-    cart_snapshot: dict,
+    amount_paise: int | None = None,
+    cart_snapshot: dict | None = None,
     delegation_scope: list[str] | None = None,
 ) -> Order:
-    """Entry point for agent-driven checkout. Runs the guardrail gate,
-    then creates a local Order row + a Razorpay Order.
+    """Entry point for agent-driven checkout.
+
+    The amount charged is derived from the trusted backend cart state rather than
+    from any model-supplied value. If a caller provides a value, it is ignored for
+    the final charge calculation.
     """
+    normalized_cart = cart_snapshot or {"items": [], "customer_id": customer_id}
+    trusted_total = calculate_cart_total_paise(normalized_cart)
+    if trusted_total <= 0:
+        raise ValueError("Cart is empty or does not contain trusted product totals")
+
+    gate_amount = int(trusted_total)
     gate_result = await check_checkout_request(
         db,
         CheckoutRequest(
             actor=actor,
             customer_id=customer_id,
-            amount_paise=amount_paise,
+            amount_paise=gate_amount,
             delegation_scope=delegation_scope,
         ),
     )
@@ -54,8 +64,8 @@ async def initiate_checkout(
     if gate_result.decision == GateDecision.ESCALATED:
         order = Order(
             customer_id=customer_id,
-            amount_paise=amount_paise,
-            cart_snapshot=cart_snapshot,
+            amount_paise=gate_amount,
+            cart_snapshot=normalized_cart,
             created_by_agent=actor,
             status=OrderStatus.AWAITING_CONFIRMATION,
         )
@@ -64,7 +74,7 @@ async def initiate_checkout(
         await db.refresh(order)
         raise CheckoutAwaitingConfirmation(order.id, gate_result.reason)
 
-    return await _create_order(db, actor=actor, customer_id=customer_id, amount_paise=amount_paise, cart_snapshot=cart_snapshot)
+    return await _create_order(db, actor=actor, customer_id=customer_id, amount_paise=gate_amount, cart_snapshot=normalized_cart)
 
 
 async def confirm_and_create_order(db: AsyncSession, order_id: str, confirmed_by: str) -> Order:

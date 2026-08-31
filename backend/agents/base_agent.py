@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.integrations.llm.gpt_oss_client import gpt_oss_chat
 from backend.integrations.llm.groq_client import groq_chat
+from backend.services.order_service import get_customer_orders
 from backend.tools.commerce_tools import TOOL_SCHEMAS, normalize_search_results, run_tool
 
 
@@ -130,6 +131,41 @@ class BaseAgent:
         )
 
         products: list[dict] = []
+        lowered = (user_message or "").lower()
+
+        if self.config.name == "customer_agent" and any(token in lowered for token in ["where is my order", "track my order", "status of my order", "order status", "refund", "cancel my order", "cancel order", "return my order"]):
+            customer_id = (workflow_state or {}).get("customer_id")
+            if db is not None and customer_id:
+                orders = await get_customer_orders(db, customer_id=customer_id)
+                if orders:
+                    latest = orders[0]
+                    reply = (
+                        f"I checked the trusted order records for customer {customer_id}. "
+                        f"Latest order {latest['order_id']} is in status '{latest['status']}' and the amount is ₹{latest['amount_paise'] / 100:.2f}."
+                    )
+                    return {
+                        "status": "completed",
+                        "reply": reply,
+                        "products": [],
+                        "ok": True,
+                        "error": None,
+                        "data": {"source": "trusted_order_lookup", "orders": orders},
+                        "actions": ["order_status_lookup"],
+                        "tool_calls": [],
+                        "delegation_request": None,
+                    }
+
+                return {
+                    "status": "completed",
+                    "reply": "I checked the trusted order records and there are no orders on file for this customer.",
+                    "products": [],
+                    "ok": True,
+                    "error": None,
+                    "data": {"source": "trusted_order_lookup", "orders": []},
+                    "actions": ["order_status_lookup"],
+                    "tool_calls": [],
+                    "delegation_request": None,
+                }
 
         if self._is_product_search(user_message):
             search_result = await run_tool(

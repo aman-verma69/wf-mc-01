@@ -13,13 +13,24 @@ from backend.database.models import Order, OrderStatus, Payment, PaymentStatus
 from backend.integrations.razorpay.client import create_refund
 
 
+def _valid_order_transition(current: OrderStatus, next_status: OrderStatus) -> bool:
+    valid = {
+        OrderStatus.CREATED: {OrderStatus.AWAITING_CONFIRMATION, OrderStatus.FAILED, OrderStatus.CANCELLED},
+        OrderStatus.AWAITING_CONFIRMATION: {OrderStatus.CREATED, OrderStatus.PAID, OrderStatus.FAILED, OrderStatus.CANCELLED},
+        OrderStatus.PAID: {OrderStatus.REFUNDED, OrderStatus.CANCELLED},
+        OrderStatus.FAILED: set(),
+        OrderStatus.REFUNDED: set(),
+        OrderStatus.CANCELLED: {OrderStatus.REFUNDED},
+    }
+    return next_status in valid.get(current, set())
+
+
 async def handle_payment_captured(db: AsyncSession, entity: dict) -> None:
     razorpay_payment_id = entity["id"]
     razorpay_order_id = entity["order_id"]
-    amount_paise = entity["amount"]
+    amount_paise = int(entity.get("amount") or 0)
     method = entity.get("method")
 
-    # idempotency: if we've already recorded this payment, do nothing
     existing = await db.scalar(select(Payment).where(Payment.razorpay_payment_id == razorpay_payment_id))
     if existing is not None:
         return
@@ -30,22 +41,27 @@ async def handle_payment_captured(db: AsyncSession, entity: dict) -> None:
                           reason="No matching local order for razorpay_order_id", context={"razorpay_order_id": razorpay_order_id})
         return
 
+    if amount_paise and order.amount_paise != amount_paise:
+        await log_action(db, actor="payment_service", action="payment.captured", decision="blocked",
+                          reason="Webhook amount does not match trusted order amount", context={"order_id": order.id, "expected_amount_paise": order.amount_paise, "received_amount_paise": amount_paise})
+        return
+
     payment = Payment(
         order_id=order.id,
         razorpay_payment_id=razorpay_payment_id,
         status=PaymentStatus.CAPTURED,
-        amount_paise=amount_paise,
+        amount_paise=order.amount_paise,
         method=method,
         raw_webhook_payload=entity,
     )
     db.add(payment)
-    order.status = OrderStatus.PAID
+    if _valid_order_transition(order.status, OrderStatus.PAID):
+        order.status = OrderStatus.PAID
     await db.commit()
 
     await log_action(db, actor="payment_service", action="payment.captured", decision="allowed",
-                      context={"order_id": order.id, "razorpay_payment_id": razorpay_payment_id, "amount_paise": amount_paise})
+                      context={"order_id": order.id, "razorpay_payment_id": razorpay_payment_id, "amount_paise": order.amount_paise})
 
-    # Notify — see services/notification_service.py
     from backend.services.notification_service import notify_order_paid
     await notify_order_paid(db, order)
 
@@ -56,7 +72,8 @@ async def handle_payment_failed(db: AsyncSession, entity: dict) -> None:
     if order is None:
         return
 
-    order.status = OrderStatus.FAILED
+    if _valid_order_transition(order.status, OrderStatus.FAILED):
+        order.status = OrderStatus.FAILED
     await db.commit()
 
     await log_action(db, actor="payment_service", action="payment.failed", decision="allowed",
@@ -81,7 +98,7 @@ async def handle_refund_processed(db: AsyncSession, entity: dict) -> None:
 
     payment.status = PaymentStatus.REFUNDED
     order = await db.get(Order, payment.order_id)
-    if order is not None:
+    if order is not None and _valid_order_transition(order.status, OrderStatus.REFUNDED):
         order.status = OrderStatus.REFUNDED
     await db.commit()
 

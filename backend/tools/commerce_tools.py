@@ -203,15 +203,15 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "initiate_checkout",
-            "description": "Start a checkout for a customer's cart. Goes through the guardrail gate — may be blocked or escalated for human confirmation.",
+            "description": "Start a checkout for a customer's trusted cart. The final amount is derived from cart state, not from any model-supplied amount.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "customer_id": {"type": "string"},
-                    "amount_paise": {"type": "integer", "description": "Total amount in paise (smallest INR unit)"},
-                    "cart_snapshot": {"type": "object", "description": "Line items and quantities"},
+                    "amount_paise": {"type": "integer", "description": "Ignored for charge calculation; total is calculated from the trusted cart."},
+                    "cart_snapshot": {"type": "object", "description": "Trusted cart snapshot with product prices in paise"},
                 },
-                "required": ["customer_id", "amount_paise", "cart_snapshot"],
+                "required": ["customer_id", "cart_snapshot"],
             },
         },
     },
@@ -265,7 +265,7 @@ async def run_tool(
                 db,
                 actor=actor,
                 customer_id=arguments["customer_id"],
-                amount_paise=arguments["amount_paise"],
+                amount_paise=arguments.get("amount_paise"),
                 cart_snapshot=arguments["cart_snapshot"],
                 delegation_scope=delegation_scope,
             )

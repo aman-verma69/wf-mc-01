@@ -19,6 +19,7 @@ from backend.agents.campaign_agent import campaign_agent
 from backend.agents.catalog_agent import catalog_agent
 from backend.agents.customer_agent import customer_agent
 from backend.agents.growth_agent import growth_agent
+from backend.services.cart_service import normalize_cart
 from backend.workflows.intent import classify_intent
 
 AGENTS = {
@@ -86,15 +87,19 @@ class CommerceWorkflow(Workflow):
         return {
             "message": "",
             "customer_id": None,
+            "customer": {},
             "intent": "general",
             "selected_agent": None,
             "active_agent": None,
             "completed_agents": [],
             "selected_products": [],
             "products": [],
-            "cart": {"items": [], "total_paise": 0},
+            "cart": {"customer_id": None, "items": [], "total_paise": 0},
+            "checkout": {"amount_paise": 0, "status": "not_started", "requires_confirmation": False},
             "order": None,
             "payment": None,
+            "current_action": None,
+            "confirmation_status": "not_required",
             "history": [],
             "delegation_history": [],
             "tool_trace": [],
@@ -139,6 +144,7 @@ class CommerceWorkflow(Workflow):
         state = await self._get_state(ctx)
         state["message"] = message
         state["customer_id"] = customer_id or state.get("customer_id")
+        state["customer"] = {"customer_id": state["customer_id"], "id": state["customer_id"]}
         state["history"] = state.get("history", [])
         state["history"].append({"role": "user", "content": message})
 
@@ -251,7 +257,22 @@ class CommerceWorkflow(Workflow):
         state["selected_products"] = result.get("products", [])
         state["products"] = result.get("products", [])
         if result.get("products"):
-            state["cart"]["items"] = result["products"]
+            state["products"] = result["products"]
+            state["cart"] = normalize_cart({
+                "customer_id": state.get("customer_id"),
+                "items": [
+                    {
+                        "product_id": product.get("id") or product.get("product_id") or str(index),
+                        "name": product.get("name") or "Product",
+                        "quantity": 1,
+                        "unit_price_paise": int(product.get("price") or 0),
+                        "currency": product.get("currency") or "INR",
+                    }
+                    for index, product in enumerate(result["products"])
+                ],
+            }, customer_id=state.get("customer_id"))
+            state["current_action"] = "product_selected"
+            state["confirmation_status"] = "not_required"
 
         tool_trace = result.get("data", {}).get("tool_trace") or []
         if tool_trace:

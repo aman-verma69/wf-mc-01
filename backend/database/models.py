@@ -37,6 +37,18 @@ class DisputeStatus(str, enum.Enum):
     LOST = "lost"
 
 
+class Cart(Base):
+    __tablename__ = "carts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    customer_id: Mapped[str] = mapped_column(String, index=True)
+    items: Mapped[dict] = mapped_column(JSON, default=dict)
+    total_paise: Mapped[int] = mapped_column(BigInteger, default=0)
+    status: Mapped[str] = mapped_column(String, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Order(Base):
     __tablename__ = "orders"
 
