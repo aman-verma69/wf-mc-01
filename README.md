@@ -43,7 +43,7 @@ uvicorn backend.main:app --reload  # or: docker-compose up
 - Dispute service (full lifecycle)
 - Webhook signature verification
 - Audit logging on every decision
-- Agent tool-calling loop (Grok + gpt-oss-20B backends)
+- Agent tool-calling loop (Groq + gpt-oss-20B backends)
 - Tavily search tool
 
 **Stubbed — needs your product/business logic:**
