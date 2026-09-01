@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "change-me-jwt-secret-at-least-32-bytes"
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    IDEMPOTENCY_PROCESSING_TIMEOUT_SECONDS: int = 300
 
     # --- Database ---
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/commerce"

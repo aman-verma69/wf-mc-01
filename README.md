@@ -72,3 +72,9 @@ Register and log in through `POST /api/v1/auth/register` and
 agent, and order routes. Customer identity is taken from the verified JWT;
 legacy `customer_id` path/body fields are retained only for route compatibility
 and must match the authenticated customer.
+
+Critical checkout, confirmation, cancellation, and refund writes accept an
+optional `Idempotency-Key` header. Reusing the same key with the same operation,
+customer, and request returns the stored result; reusing it for a different
+request returns `409 Conflict`. Requests without the header retain the existing
+behavior.

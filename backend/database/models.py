@@ -47,6 +47,22 @@ class Customer(Base):
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
 
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_records"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    key: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    operation: Mapped[str] = mapped_column(String, nullable=False)
+    customer_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="processing")
+    response_status: Mapped[int | None] = mapped_column(nullable=True)
+    response_body: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Cart(Base):
     __tablename__ = "carts"
 

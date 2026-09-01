@@ -18,6 +18,20 @@ the token subject and reject missing, invalid, expired, or inactive identities.
 Any legacy customer ID supplied in a path or body is checked against that
 identity and cannot select another customer's cart or order.
 
+## Idempotent commerce writes
+
+`idempotency_records` stores the operation, authenticated customer, SHA-256
+hash of non-secret request fields, processing state, response, and resource ID.
+The key is globally unique, so it cannot be reused across operations or
+customers. `checkout.initiate`, `checkout.confirm`, `order.cancel`, and
+`order.refund` use this store when an `Idempotency-Key` header is supplied.
+Completed and failed results replay without repeating external side effects;
+processing requests return `409` with `Retry-After`; mismatched reuse returns
+`409`. Records older than `IDEMPOTENCY_PROCESSING_TIMEOUT_SECONDS` become a
+stored `409` recovery result instead of being retried automatically. Failed
+provider calls are stored as failures and are never replayed as successes.
+Razorpay webhook idempotency remains independent of this client header.
+
 ## Webhook verification
 
 `backend/integrations/razorpay/webhooks.py::verify_signature` runs a
