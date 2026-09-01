@@ -226,6 +226,7 @@ def _build_product_from_result(item: dict, *, preferred_name: str | None = None,
         "id": item.get("id") or str(url or title),
         "name": title,
         "price": price,
+        "unit_price_paise": price * 100 if price is not None else None,
         "currency": "INR",
         "image_url": image_url,
         "source": source,
@@ -317,6 +318,20 @@ TOOL_SCHEMAS = [
                     "query": {"type": "string", "description": "Search query"},
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "view_cart",
+            "description": "Read the persisted customer cart from the backend, not from workflow memory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_id": {"type": "string"},
+                },
+                "required": ["customer_id"],
             },
         },
     },
@@ -444,7 +459,7 @@ async def run_tool(
         products = normalize_search_results(result)
         return {"ok": True, "error": None, "result": result, "products": products}
 
-    if name == "get_cart":
+    if name in {"get_cart", "view_cart"}:
         customer_id = arguments["customer_id"]
         cart = await get_cart(db, customer_id=customer_id)
         return {"ok": True, "cart": cart}
@@ -473,12 +488,19 @@ async def run_tool(
 
     if name == "initiate_checkout":
         try:
+            # Checkout must use the current persisted cart, never a snapshot
+            # reconstructed by the model.
+            persisted_cart = (
+                await get_cart(db, customer_id=arguments["customer_id"])
+                if db is not None
+                else arguments.get("cart_snapshot")
+            )
             order = await initiate_checkout(
                 db,
                 actor=actor,
                 customer_id=arguments["customer_id"],
                 amount_paise=arguments.get("amount_paise"),
-                cart_snapshot=arguments.get("cart_snapshot") or await get_cart(db, customer_id=arguments["customer_id"]),
+                cart_snapshot=persisted_cart,
                 delegation_scope=delegation_scope,
             )
             return {"ok": True, "order_id": order.id, "status": order.status.value}

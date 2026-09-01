@@ -130,6 +130,24 @@ class BaseAgent:
             }
         )
 
+        current_customer_id = (workflow_state or {}).get("customer_id")
+        last_products = (workflow_state or {}).get("last_products") or []
+        if current_customer_id or last_products:
+            messages.insert(
+                1,
+                {
+                    "role": "system",
+                    "content": (
+                        f"Trusted current customer_id: {current_customer_id or 'unknown'}. "
+                        "Use this customer_id for cart and checkout tools. "
+                        "The following are the latest discovered product candidates; "
+                        "they may resolve references such as 'the first one', but they "
+                        "are not in the cart unless add_to_cart is explicitly called:\n"
+                        f"{json.dumps(last_products, ensure_ascii=True)}"
+                    ),
+                },
+            )
+
         products: list[dict] = []
         lowered = (user_message or "").lower()
 
@@ -336,11 +354,22 @@ class BaseAgent:
                     if tool_name not in self.config.allowed_tools:
                         raise ValueError(f"Tool '{tool_name}' is not allowed for {self.config.name}")
 
+                    if current_customer_id and tool_name in {
+                        "get_cart",
+                        "view_cart",
+                        "add_to_cart",
+                        "update_cart",
+                        "remove_from_cart",
+                        "initiate_checkout",
+                    }:
+                        args["customer_id"] = current_customer_id
+
                     result = await run_tool(
                         db,
                         actor=self.config.name,
                         name=tool_name,
                         arguments=args,
+                        delegation_scope=self.config.delegation_scope,
                     )
 
                     # Preserve search results for the frontend.
@@ -348,6 +377,11 @@ class BaseAgent:
                         search_products = result.get("products") or normalize_search_results(result.get("result"))
                         for product in search_products:
                             products.append(product)
+
+                    if tool_name in {"get_cart", "view_cart", "add_to_cart", "update_cart", "remove_from_cart"} and result.get("cart"):
+                        # Keep the conversational state aligned with the DB result.
+                        if workflow_state is not None:
+                            workflow_state["cart"] = result["cart"]
 
                     print("\nTOOL RESULT:")
                     print(result)

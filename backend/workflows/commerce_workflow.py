@@ -94,6 +94,7 @@ class CommerceWorkflow(Workflow):
             "completed_agents": [],
             "selected_products": [],
             "products": [],
+            "last_products": [],
             "cart": {"customer_id": None, "items": [], "total_paise": 0},
             "checkout": {"amount_paise": 0, "status": "not_started", "requires_confirmation": False},
             "order": None,
@@ -238,6 +239,8 @@ class CommerceWorkflow(Workflow):
             state["history"].append({"role": "assistant", "content": delegated_result.get("reply", "")})
             state["selected_products"] = delegated_result.get("products", []) or result.get("products", [])
             state["products"] = state["selected_products"]
+            if state["products"]:
+                state["last_products"] = state["products"]
             state["completed_agents"] = list(dict.fromkeys(state.get("completed_agents", []) + [ev.agent_key, target_agent]))
             state["last_result"] = delegated_result
             state["status"] = "delegation_completed"
@@ -260,44 +263,7 @@ class CommerceWorkflow(Workflow):
         state["selected_products"] = result.get("products", [])
         state["products"] = result.get("products", [])
         if result.get("products"):
-            state["products"] = result["products"]
-            if state.get("customer_id") and db is not None:
-                for index, product in enumerate(result["products"]):
-                    product_id = product.get("id") or product.get("product_id") or str(index)
-                    price = product.get("price")
-                    try:
-                        price_int = int(price) if price is not None else 0
-                    except (TypeError, ValueError):
-                        price_int = 0
-                    if price_int <= 0:
-                        continue
-                    from backend.services.cart_service import add_item_to_db_cart
-                    await add_item_to_db_cart(
-                        db,
-                        customer_id=state["customer_id"],
-                        item={
-                            "product_id": product_id,
-                            "name": product.get("name") or "Product",
-                            "quantity": 1,
-                            "unit_price_paise": price_int,
-                            "currency": product.get("currency") or "INR",
-                        },
-                    )
-                state["cart"] = await get_cart(db, customer_id=state["customer_id"])
-            else:
-                state["cart"] = normalize_cart({
-                    "customer_id": state.get("customer_id"),
-                    "items": [
-                        {
-                            "product_id": product.get("id") or product.get("product_id") or str(index),
-                            "name": product.get("name") or "Product",
-                            "quantity": 1,
-                            "unit_price_paise": int(product.get("price") or 0),
-                            "currency": product.get("currency") or "INR",
-                        }
-                        for index, product in enumerate(result["products"])
-                    ],
-                }, customer_id=state.get("customer_id"))
+            state["last_products"] = result["products"]
             state["current_action"] = "product_selected"
             state["confirmation_status"] = "not_required"
 
