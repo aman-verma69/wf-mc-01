@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ProductCard(BaseModel):
@@ -45,12 +45,72 @@ class AgentChatResponse(BaseModel):
     error: str | None = None
 
 
+class CartItemCreateRequest(BaseModel):
+    product_id: str
+    name: str
+    quantity: int = 1
+    unit_price_paise: int | None = None
+    price_paise: int | None = None
+    currency: str = "INR"
+
+
+class CartItemUpdateRequest(BaseModel):
+    quantity: int
+
+
+class CartClearResponse(BaseModel):
+    customer_id: str
+    items: list[dict] = []
+    total_paise: int = 0
+
+
+class CartResponse(BaseModel):
+    customer_id: str
+    items: list[dict] = []
+    total_paise: int = 0
+
+
+class CheckoutInitiateRequest(BaseModel):
+    customer_id: str
+    actor: str = "api"
+
+
+class CheckoutInitiateResponse(BaseModel):
+    order_id: str
+    customer_id: str
+    amount_paise: int
+    currency: str = "INR"
+    status: str
+    razorpay_order_id: str | None = None
+
+
 class ConfirmCheckoutRequest(BaseModel):
     order_id: str
     confirmed_by: str
 
 
+class OrderStatusResponse(BaseModel):
+    order_id: str
+    customer_id: str
+    status: str
+    amount_paise: int
+    currency: str = "INR"
+    cart_snapshot: dict = {}
+    razorpay_order_id: str | None = None
+
+
+class CustomerOrderListResponse(BaseModel):
+    orders: list[OrderStatusResponse] = []
+
+
 class RefundRequest(BaseModel):
-    razorpay_payment_id: str
+    customer_id: str | None = None
+    order_id: str | None = None
+    razorpay_payment_id: str | None = None
     amount_paise: int | None = None
     reason: str = ""
+
+
+class CancelOrderRequest(BaseModel):
+    customer_id: str
+    reason: str = "customer_request"

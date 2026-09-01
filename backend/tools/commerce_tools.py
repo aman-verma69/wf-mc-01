@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.integrations.tavily.client import search as tavily_search
+from backend.services.cart_service import add_item_to_db_cart, get_cart, remove_db_cart_item, update_db_cart_item
 from backend.services.checkout_service import CheckoutAwaitingConfirmation, CheckoutBlocked, initiate_checkout
 
 
@@ -85,26 +86,91 @@ def _is_article_like(title: str, url: str | None, content: str | None) -> bool:
     return False
 
 
-def extract_inr_price(value: str | None) -> int | None:
-    """Extract a price in INR currency units (not paise) from a raw string."""
-    if not value:
+def parse_indian_price(value: str | int | float | None) -> int | None:
+    """Parse Indian rupee prices like ₹3.9k, ₹5k, ₹4,999, ₹3990.
+
+    Return rupees, not paise. Prices that are clearly budget ceilings such as
+    'under ₹5k' are intentionally rejected as product pricing.
+    """
+    if value is None:
         return None
 
-    text = value.lower().replace("₹", "rs ")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(round(float(value)))
 
-    for pattern in (
-        r"(?:rs\.?|inr)\s*([0-9][0-9,]*(?:\.\d+)?)",
-        r"(?:price|mrp|m\.r\.p|starts at|from|at)\s*(?:rs\.?|inr)?\s*([0-9][0-9,]*(?:\.\d+)?)",
-    ):
+    text = str(value).lower().replace("₹", "rs ").replace("inr", "rs ")
+    if re.search(r"\b(?:under|below|less than|upto|up to|within|budget|max(?:imum)?)\b", text):
+        return None
+
+    patterns = [
+        r"(?:^|[^a-z0-9])rs\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?:\s*(k))?\b",
+        r"(?:^|[^a-z0-9])rs\s+(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?:\s*(k))?\b",
+    ]
+    for pattern in patterns:
         match = re.search(pattern, text)
         if match:
-            num = match.group(1).replace(",", "")
-            try:
-                return int(float(num))
-            except ValueError:
-                return None
+            amount = float(match.group(1).replace(",", ""))
+            if match.group(2) == "k":
+                amount *= 1000
+            return int(round(amount))
 
     return None
+
+
+def extract_inr_price(value: str | None) -> int | None:
+    """Backward-compatible wrapper around parse_indian_price."""
+    return parse_indian_price(value)
+
+
+def _is_research_context(title: str, content: str | None, url: str | None) -> bool:
+    text = " ".join(filter(None, [title, content or "", url or ""])).lower()
+    if not text:
+        return False
+
+    if "reddit.com" in (url or "").lower() or "reddit" in text:
+        return True
+
+    path = (urlparse(url or "").path or "").lower()
+    if any(token in path for token in ("blog", "article", "guide", "review", "compare", "list", "category", "collection", "shop", "collections", "products", "offers", "deals", "sale")):
+        return True
+
+    if any(token in text for token in ("reddit", "forum discussion", "buying guide", "roundup", "review", "blog post", "comparison guide", "top picks")):
+        return True
+
+    return False
+
+
+def _extract_product_names(text: str) -> list[str]:
+    text = text or ""
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    rejected_tokens = {
+        "wireless", "headphones", "earbuds", "earphones", "audio", "buy", "shop",
+        "review", "compare", "guide", "category", "collection", "sale", "deal",
+        "premium", "sound", "under", "budget", "offers", "deals", "best", "top",
+    }
+
+    model_patterns = [
+        r"\b(?:[A-Z][a-z0-9]+(?:\s+[A-Z][a-z0-9]+){0,3}\s+\d{3,4}(?:\s+[A-Z][A-Za-z0-9-]+)?)\b",
+        r"\b(?:[A-Za-z]+(?:\s+[A-Za-z]+){0,2}\s+\d{3,4}(?:\s+[A-Z][A-Za-z0-9-]+)?)\b",
+    ]
+    for pattern in model_patterns:
+        for match in re.finditer(pattern, text):
+            candidate = match.group(0).strip()
+            lower = candidate.lower()
+            if len(candidate.split()) < 2:
+                continue
+            if any(token in lower for token in ("wireless headphones", "headphones under", "premium sound", "under", "budget")):
+                continue
+            tokens = re.split(r"\s+", candidate.strip())
+            if any(token.lower() in rejected_tokens for token in tokens):
+                continue
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+
+    return candidates
 
 
 def _is_product_like(title: str, content: str | None, url: str | None) -> bool:
@@ -112,23 +178,81 @@ def _is_product_like(title: str, content: str | None, url: str | None) -> bool:
     if not text:
         return False
 
-    if _is_article_like(title, url, content):
+    if _is_research_context(title, content, url):
         return False
 
+    if any(token in (urlparse(url or "").path or "").lower() for token in ("blog", "article", "guide", "review", "compare", "list", "category", "collection", "shop", "offers", "sale", "deals")):
+        return False
+
+    title_signal = (title or "").strip()
+    product_names = _extract_product_names(title_signal) or _extract_product_names(content or "")
+    explicit_product = bool(product_names)
     has_product_keyword = any(token in text for token in PRODUCT_KEYWORDS)
     has_model_signal = bool(re.search(r"\b[a-z0-9]+[-_][a-z0-9]+\b|\b(?:wh|air|rockerz|elite|x|e|m|a)[a-z0-9-]+\b", title.lower()))
     has_merchant_signal = bool(url and "/" in url and not any(token in (urlparse(url).path or "").lower() for token in ("blog", "article", "guide", "review", "compare", "list")))
 
-    return has_product_keyword or has_model_signal or has_merchant_signal
+    if explicit_product:
+        return True
+
+    return (has_product_keyword or has_model_signal) and not re.search(r"\b(?:buy|shop|collection|category|deal|offer|sale|best|top|guide|review|comparison|list|under)\b", title.lower())
+
+
+def _build_product_from_result(item: dict, *, preferred_name: str | None = None, preferred_url: str | None = None, preferred_price: int | None = None, preferred_image: str | None = None) -> dict | None:
+    title = (preferred_name or item.get("title") or "").strip()
+    if not title:
+        return None
+
+    url = preferred_url or item.get("url")
+    content = item.get("content") or ""
+    source = item.get("source") or (urlparse(url).netloc if url else "search")
+    price = preferred_price if preferred_price is not None else parse_indian_price(item.get("price") or f"{title} {content}")
+
+    if price is None and re.search(r"(?:rs|inr|₹)", f"{title} {content}", flags=re.IGNORECASE):
+        price = parse_indian_price(f"{title} {content}")
+
+    if price is None and not re.search(r"(?:rs|inr|₹)", f"{title} {content}", flags=re.IGNORECASE):
+        # Missing price is acceptable; do not fabricate it.
+        pass
+
+    image_url = preferred_image or item.get("image_url") or item.get("thumbnail") or item.get("image")
+    if image_url is not None and not isinstance(image_url, str):
+        image_url = None
+    if isinstance(image_url, str) and image_url.startswith(("http://", "https://")):
+        pass
+    else:
+        image_url = None
+
+    return {
+        "id": item.get("id") or str(url or title),
+        "name": title,
+        "price": price,
+        "currency": "INR",
+        "image_url": image_url,
+        "source": source,
+        "product_url": url,
+        "availability": "unknown",
+        "metadata": {
+            "content": content[:500],
+            "score": item.get("score"),
+            "is_product_candidate": True,
+            "source_type": "product",
+        },
+    }
 
 
 def normalize_search_results(search_response: dict | None) -> list[dict]:
-    """Normalize Tavily search results into the app's strict product card shape."""
+    """Normalize Tavily search results into the app's strict product card shape.
+
+    Current Tavily config in backend/integrations/tavily/client.py does not
+    request image data; if a result does not include a trustworthy image URL,
+    image_url stays null instead of fabricating one.
+    """
     if not isinstance(search_response, dict):
         return []
 
     results = search_response.get("results") or []
     products: list[dict] = []
+    seen_ids: set[str] = set()
 
     for item in results:
         if not isinstance(item, dict):
@@ -141,45 +265,42 @@ def normalize_search_results(search_response: dict | None) -> list[dict]:
 
         if not title:
             continue
+
+        if title and _is_product_like(title, content, url):
+            product = _build_product_from_result(item)
+            if product is not None:
+                product_id = product["id"]
+                if product_id not in seen_ids:
+                    seen_ids.add(product_id)
+                    products.append(product)
+            continue
+
+        if _is_research_context(title, content, url):
+            continue
+
+        explicit_names = _extract_product_names(title)
+        if explicit_names:
+            for name in explicit_names[:3]:
+                product = _build_product_from_result(item, preferred_name=name, preferred_url=url, preferred_image=None)
+                if product is None:
+                    continue
+                product_id = f"{source}:{name}:{url or ''}"
+                if product_id in seen_ids:
+                    continue
+                seen_ids.add(product_id)
+                products.append(product)
+            continue
+
         if not _is_product_like(title, content, url):
             continue
 
-        image_url = item.get("image_url") or item.get("thumbnail") or (search_response.get("images") or [None])[0]
-        price = item.get("price")
-        if price is None:
-            price = extract_inr_price(f"{title} {content}")
-        else:
-            try:
-                price = int(float(str(price).replace(",", "")))
-            except (TypeError, ValueError):
-                price = extract_inr_price(str(price))
-
-        if price is None and re.search(r"\b(?:under|below|within|upto|up to|less than|budget)\s*(?:rs\.?|inr|₹)?\s*\d+(?:[\s,\.]\d+)*\b", f"{title} {content}", flags=re.IGNORECASE):
-            price = None
-
-        availability = "unknown"
-        text = f"{title} {content}".lower()
-        if "out of stock" in text or "sold out" in text:
-            availability = "out_of_stock"
-        elif "in stock" in text or "available" in text:
-            availability = "in_stock"
-
-        product = {
-            "id": item.get("id") or str(url or title),
-            "name": title,
-            "price": int(price) if isinstance(price, (int, float)) else None,
-            "currency": "INR",
-            "image_url": image_url if isinstance(image_url, str) and image_url.startswith(("http://", "https://")) else None,
-            "source": source,
-            "product_url": url,
-            "availability": availability,
-            "metadata": {
-                "content": content[:500],
-                "score": item.get("score"),
-                "is_product_candidate": True,
-                "source_type": "product",
-            },
-        }
+        product = _build_product_from_result(item)
+        if product is None:
+            continue
+        product_id = product["id"]
+        if product_id in seen_ids:
+            continue
+        seen_ids.add(product_id)
         products.append(product)
 
     return products
@@ -196,6 +317,70 @@ TOOL_SCHEMAS = [
                     "query": {"type": "string", "description": "Search query"},
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_cart",
+            "description": "Read the persisted customer cart from the backend, not from workflow memory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_id": {"type": "string"},
+                },
+                "required": ["customer_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_to_cart",
+            "description": "Add a trusted product line item to the persisted customer cart.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_id": {"type": "string"},
+                    "product_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "quantity": {"type": "integer", "minimum": 1},
+                    "unit_price_paise": {"type": "integer"},
+                    "currency": {"type": "string"},
+                },
+                "required": ["customer_id", "product_id", "name", "quantity", "unit_price_paise"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_cart",
+            "description": "Update a cart item quantity for a persisted customer cart.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_id": {"type": "string"},
+                    "product_id": {"type": "string"},
+                    "quantity": {"type": "integer", "minimum": 0},
+                },
+                "required": ["customer_id", "product_id", "quantity"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_from_cart",
+            "description": "Remove a product from the persisted customer cart.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_id": {"type": "string"},
+                    "product_id": {"type": "string"},
+                },
+                "required": ["customer_id", "product_id"],
             },
         },
     },
@@ -259,6 +444,33 @@ async def run_tool(
         products = normalize_search_results(result)
         return {"ok": True, "error": None, "result": result, "products": products}
 
+    if name == "get_cart":
+        customer_id = arguments["customer_id"]
+        cart = await get_cart(db, customer_id=customer_id)
+        return {"ok": True, "cart": cart}
+
+    if name == "add_to_cart":
+        customer_id = arguments["customer_id"]
+        payload = {
+            "product_id": arguments["product_id"],
+            "name": arguments["name"],
+            "quantity": arguments.get("quantity", 1),
+            "unit_price_paise": arguments["unit_price_paise"],
+            "currency": arguments.get("currency", "INR"),
+        }
+        cart = await add_item_to_db_cart(db, customer_id=customer_id, item=payload)
+        return {"ok": True, "cart": cart}
+
+    if name == "update_cart":
+        customer_id = arguments["customer_id"]
+        cart = await update_db_cart_item(db, customer_id=customer_id, product_id=arguments["product_id"], quantity=arguments["quantity"])
+        return {"ok": True, "cart": cart}
+
+    if name == "remove_from_cart":
+        customer_id = arguments["customer_id"]
+        cart = await remove_db_cart_item(db, customer_id=customer_id, product_id=arguments["product_id"])
+        return {"ok": True, "cart": cart}
+
     if name == "initiate_checkout":
         try:
             order = await initiate_checkout(
@@ -266,7 +478,7 @@ async def run_tool(
                 actor=actor,
                 customer_id=arguments["customer_id"],
                 amount_paise=arguments.get("amount_paise"),
-                cart_snapshot=arguments["cart_snapshot"],
+                cart_snapshot=arguments.get("cart_snapshot") or await get_cart(db, customer_id=arguments["customer_id"]),
                 delegation_scope=delegation_scope,
             )
             return {"ok": True, "order_id": order.id, "status": order.status.value}

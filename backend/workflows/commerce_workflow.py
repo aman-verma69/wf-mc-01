@@ -19,7 +19,7 @@ from backend.agents.campaign_agent import campaign_agent
 from backend.agents.catalog_agent import catalog_agent
 from backend.agents.customer_agent import customer_agent
 from backend.agents.growth_agent import growth_agent
-from backend.services.cart_service import normalize_cart
+from backend.services.cart_service import get_cart, normalize_cart
 from backend.workflows.intent import classify_intent
 
 AGENTS = {
@@ -148,6 +148,9 @@ class CommerceWorkflow(Workflow):
         state["history"] = state.get("history", [])
         state["history"].append({"role": "user", "content": message})
 
+        if customer_id and db is not None:
+            state["cart"] = await get_cart(db, customer_id=customer_id)
+
         inferred_agent = self._infer_agent_key(agent_key, message)
         state["intent"] = classify_intent(agent_key, message)
         state["selected_agent"] = inferred_agent
@@ -258,19 +261,43 @@ class CommerceWorkflow(Workflow):
         state["products"] = result.get("products", [])
         if result.get("products"):
             state["products"] = result["products"]
-            state["cart"] = normalize_cart({
-                "customer_id": state.get("customer_id"),
-                "items": [
-                    {
-                        "product_id": product.get("id") or product.get("product_id") or str(index),
-                        "name": product.get("name") or "Product",
-                        "quantity": 1,
-                        "unit_price_paise": int(product.get("price") or 0),
-                        "currency": product.get("currency") or "INR",
-                    }
-                    for index, product in enumerate(result["products"])
-                ],
-            }, customer_id=state.get("customer_id"))
+            if state.get("customer_id") and db is not None:
+                for index, product in enumerate(result["products"]):
+                    product_id = product.get("id") or product.get("product_id") or str(index)
+                    price = product.get("price")
+                    try:
+                        price_int = int(price) if price is not None else 0
+                    except (TypeError, ValueError):
+                        price_int = 0
+                    if price_int <= 0:
+                        continue
+                    from backend.services.cart_service import add_item_to_db_cart
+                    await add_item_to_db_cart(
+                        db,
+                        customer_id=state["customer_id"],
+                        item={
+                            "product_id": product_id,
+                            "name": product.get("name") or "Product",
+                            "quantity": 1,
+                            "unit_price_paise": price_int,
+                            "currency": product.get("currency") or "INR",
+                        },
+                    )
+                state["cart"] = await get_cart(db, customer_id=state["customer_id"])
+            else:
+                state["cart"] = normalize_cart({
+                    "customer_id": state.get("customer_id"),
+                    "items": [
+                        {
+                            "product_id": product.get("id") or product.get("product_id") or str(index),
+                            "name": product.get("name") or "Product",
+                            "quantity": 1,
+                            "unit_price_paise": int(product.get("price") or 0),
+                            "currency": product.get("currency") or "INR",
+                        }
+                        for index, product in enumerate(result["products"])
+                    ],
+                }, customer_id=state.get("customer_id"))
             state["current_action"] = "product_selected"
             state["confirmation_status"] = "not_required"
 

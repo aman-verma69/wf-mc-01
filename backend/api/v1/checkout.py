@@ -2,10 +2,42 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database.session import get_db
-from backend.schemas.api_schemas import ConfirmCheckoutRequest
-from backend.services.checkout_service import confirm_and_create_order
+from backend.schemas.api_schemas import CheckoutInitiateRequest, CheckoutInitiateResponse, ConfirmCheckoutRequest
+from backend.services.cart_service import get_cart
+from backend.services.checkout_service import CheckoutAwaitingConfirmation, CheckoutBlocked, confirm_and_create_order, initiate_checkout
 
 router = APIRouter(prefix="/checkout", tags=["checkout"])
+
+
+@router.post("/initiate", response_model=CheckoutInitiateResponse)
+async def initiate(request: CheckoutInitiateRequest, db: AsyncSession = Depends(get_db)):
+    cart = await get_cart(db, customer_id=request.customer_id)
+    if not cart.get("items"):
+        raise HTTPException(status_code=400, detail="Cart is empty")
+
+    try:
+        order = await initiate_checkout(
+            db,
+            actor=request.actor,
+            customer_id=request.customer_id,
+            cart_snapshot=cart,
+            delegation_scope=["checkout"],
+        )
+    except CheckoutBlocked as exc:
+        raise HTTPException(status_code=403, detail=exc.reason) from exc
+    except CheckoutAwaitingConfirmation as exc:
+        raise HTTPException(status_code=202, detail={"order_id": exc.order_id, "reason": exc.reason, "status": "awaiting_confirmation"}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return CheckoutInitiateResponse(
+        order_id=order.id,
+        customer_id=order.customer_id,
+        amount_paise=order.amount_paise,
+        currency=order.currency,
+        status=order.status.value,
+        razorpay_order_id=order.razorpay_order_id,
+    )
 
 
 @router.post("/confirm")

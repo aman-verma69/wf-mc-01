@@ -6,7 +6,7 @@ from llama_index.core.workflow import Context, StartEvent
 
 from backend.agents.base_agent import AgentConfig, BaseAgent
 from backend.main import app
-from backend.tools.commerce_tools import normalize_search_results, run_tool
+from backend.tools.commerce_tools import normalize_search_results, parse_indian_price, run_tool
 from backend.workflows.commerce_workflow import AGENTS, CommerceWorkflow, RouteEvent
 
 

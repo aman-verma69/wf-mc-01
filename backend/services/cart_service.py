@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.database.models import Cart
+
 
 def normalize_cart(cart: dict[str, Any] | None, *, customer_id: str | None = None) -> dict[str, Any]:
     """Coerce a cart-like payload into a strict, validated shape."""
@@ -170,3 +175,140 @@ def remove_item_from_cart(cart: dict[str, Any] | None, product_id: str) -> dict[
     normalized["items"] = [item for item in normalized["items"] if item["product_id"] != product_id]
     normalized["total_paise"] = calculate_cart_total_paise(normalized)
     return normalized
+
+
+async def get_or_create_cart(db: AsyncSession, *, customer_id: str) -> Cart:
+    if not customer_id:
+        raise ValueError("customer_id is required")
+
+    cart = await db.scalar(
+        select(Cart).where(Cart.customer_id == customer_id, Cart.status == "active").order_by(Cart.updated_at.desc())
+    )
+    if cart is None:
+        cart = Cart(customer_id=customer_id, items={"items": [], "customer_id": customer_id, "total_paise": 0}, total_paise=0)
+        db.add(cart)
+        await db.commit()
+        await db.refresh(cart)
+    return cart
+
+
+def serialize_cart(cart: Cart | dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(cart, Cart):
+        payload = cart.items or {"items": [], "customer_id": cart.customer_id, "total_paise": cart.total_paise}
+        if not isinstance(payload, dict):
+            payload = {"items": [], "customer_id": cart.customer_id, "total_paise": cart.total_paise}
+        normalized = normalize_cart(payload, customer_id=cart.customer_id)
+        return normalized
+
+    if cart is None:
+        return {"customer_id": "", "items": [], "total_paise": 0}
+
+    normalized = normalize_cart(cart, customer_id=(cart or {}).get("customer_id"))
+    return normalized
+
+
+async def get_cart(db: AsyncSession, *, customer_id: str) -> dict[str, Any]:
+    cart = await get_or_create_cart(db, customer_id=customer_id)
+    return serialize_cart(cart)
+
+
+async def add_item_to_db_cart(db: AsyncSession, *, customer_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    cart = await get_or_create_cart(db, customer_id=customer_id)
+    payload = serialize_cart(cart)
+    payload["customer_id"] = customer_id
+    current = payload.get("items") or []
+    product_id = str(item.get("product_id") or item.get("id") or item.get("sku") or "").strip()
+    if not product_id:
+        raise ValueError("Cart item is missing product_id")
+
+    qty = int(item.get("quantity") or 1)
+    if qty <= 0:
+        raise ValueError("Cart quantity must be positive")
+
+    unit_price_paise = item.get("unit_price_paise")
+    if unit_price_paise is None:
+        unit_price_paise = item.get("price_paise")
+    if unit_price_paise is None:
+        unit_price_paise = item.get("price")
+    if unit_price_paise is None:
+        raise ValueError("Cart item is missing a trusted unit_price_paise")
+
+    unit_price_paise = int(unit_price_paise)
+    item_payload = {
+        "product_id": product_id,
+        "name": str(item.get("name") or item.get("product_name") or product_id),
+        "quantity": qty,
+        "unit_price_paise": unit_price_paise,
+        "currency": str(item.get("currency") or "INR"),
+    }
+
+    matched = False
+    for existing in current:
+        if existing["product_id"] == product_id:
+            existing["quantity"] += qty
+            existing["unit_price_paise"] = unit_price_paise
+            matched = True
+            break
+    if not matched:
+        current.append(item_payload)
+
+    payload["items"] = current
+    payload["total_paise"] = calculate_cart_total_paise(payload)
+    cart.items = payload
+    cart.total_paise = payload["total_paise"]
+    await db.commit()
+    await db.refresh(cart)
+    return serialize_cart(cart)
+
+
+async def update_db_cart_item(db: AsyncSession, *, customer_id: str, product_id: str, quantity: int) -> dict[str, Any]:
+    cart = await get_or_create_cart(db, customer_id=customer_id)
+    payload = serialize_cart(cart)
+    current = payload.get("items") or []
+    target_qty = int(quantity or 0)
+    if target_qty < 0:
+        raise ValueError("Quantity cannot be negative")
+
+    found = False
+    updated_items = []
+    for item in current:
+        if item["product_id"] == product_id:
+            found = True
+            if target_qty == 0:
+                continue
+            item["quantity"] = target_qty
+            updated_items.append(item)
+        else:
+            updated_items.append(item)
+
+    if not found:
+        raise ValueError(f"Product {product_id} not found in cart")
+
+    payload["items"] = updated_items
+    payload["total_paise"] = calculate_cart_total_paise(payload)
+    cart.items = payload
+    cart.total_paise = payload["total_paise"]
+    await db.commit()
+    await db.refresh(cart)
+    return serialize_cart(cart)
+
+
+async def remove_db_cart_item(db: AsyncSession, *, customer_id: str, product_id: str) -> dict[str, Any]:
+    cart = await get_or_create_cart(db, customer_id=customer_id)
+    payload = serialize_cart(cart)
+    payload["items"] = [item for item in (payload.get("items") or []) if item["product_id"] != product_id]
+    payload["total_paise"] = calculate_cart_total_paise(payload)
+    cart.items = payload
+    cart.total_paise = payload["total_paise"]
+    await db.commit()
+    await db.refresh(cart)
+    return serialize_cart(cart)
+
+
+async def clear_db_cart(db: AsyncSession, *, customer_id: str) -> dict[str, Any]:
+    cart = await get_or_create_cart(db, customer_id=customer_id)
+    cart.items = {"items": [], "customer_id": customer_id, "total_paise": 0}
+    cart.total_paise = 0
+    await db.commit()
+    await db.refresh(cart)
+    return serialize_cart(cart)

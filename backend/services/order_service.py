@@ -10,6 +10,10 @@ from backend.database.models import Order, OrderStatus, Payment
 from backend.services.payment_service import refund_payment
 
 
+async def get_order_by_id(db: AsyncSession, *, order_id: str) -> Order | None:
+    return await db.get(Order, order_id)
+
+
 async def get_customer_orders(db: AsyncSession, *, customer_id: str, order_id: str | None = None) -> list[dict[str, Any]]:
     if not customer_id:
         return []
