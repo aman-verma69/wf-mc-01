@@ -15,7 +15,7 @@ from backend.integrations.razorpay.client import create_refund
 
 def _valid_order_transition(current: OrderStatus, next_status: OrderStatus) -> bool:
     valid = {
-        OrderStatus.CREATED: {OrderStatus.AWAITING_CONFIRMATION, OrderStatus.FAILED, OrderStatus.CANCELLED},
+        OrderStatus.CREATED: {OrderStatus.AWAITING_CONFIRMATION,OrderStatus.PAID,OrderStatus.FAILED, OrderStatus.CANCELLED},
         OrderStatus.AWAITING_CONFIRMATION: {OrderStatus.CREATED, OrderStatus.PAID, OrderStatus.FAILED, OrderStatus.CANCELLED},
         OrderStatus.PAID: {OrderStatus.REFUNDED, OrderStatus.CANCELLED},
         OrderStatus.FAILED: set(),

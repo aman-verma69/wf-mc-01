@@ -2,9 +2,11 @@ import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from backend.database.models import Base
+from backend.database.models import Base, Order, OrderStatus, Payment, PaymentStatus
+from backend.services.payment_service import handle_payment_captured
 from backend.main import app
 from backend.database.session import get_db
 
@@ -140,3 +142,58 @@ def test_order_and_refund_authorization_checks(test_db):
 
     response = client.post(f"/api/v1/orders/{order_id}/cancel", json={"customer_id": "cust-1"})
     assert response.status_code == 400, response.text
+
+def test_payment_captured_transitions_created_order_to_paid(test_db):
+    async def run_test():
+        async with test_db() as session:
+            # Create a local order in CREATED state.
+            order = Order(
+                id="order-created-to-paid-1",
+                customer_id="cust-payment-1",
+                amount_paise=659800,
+                currency="INR",
+                status=OrderStatus.CREATED,
+                razorpay_order_id="order_test_created_paid_001",
+                cart_snapshot={
+                    "customer_id": "cust-payment-1",
+                    "items": [
+                        {
+                            "product_id": "prod-1",
+                            "name": "Test Gaming Headphones",
+                            "quantity": 2,
+                            "unit_price_paise": 329900,
+                            "currency": "INR",
+                        }
+                    ],
+                },
+            )
+
+            session.add(order)
+            await session.commit()
+
+            # Simulate a Razorpay payment.captured event.
+            entity = {
+                "id": "pay_test_created_paid_001",
+                "order_id": "order_test_created_paid_001",
+                "amount": 659800,
+                "method": "card",
+            }
+
+            await handle_payment_captured(session, entity)
+
+            # Verify the order transitioned from CREATED to PAID.
+            await session.refresh(order)
+
+            payment = await session.scalar(
+                select(Payment).where(
+                    Payment.razorpay_payment_id == "pay_test_created_paid_001"
+                )
+            )
+
+            assert order.status == OrderStatus.PAID
+            assert payment is not None
+            assert payment.status == PaymentStatus.CAPTURED
+            assert payment.order_id == order.id
+            assert payment.amount_paise == 659800
+
+    asyncio.run(run_test())
