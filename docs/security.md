@@ -18,6 +18,12 @@ the token subject and reject missing, invalid, expired, or inactive identities.
 Any legacy customer ID supplied in a path or body is checked against that
 identity and cannot select another customer's cart or order.
 
+Product management is restricted to customers whose persisted role is
+`merchant`; the role is not accepted from public registration input. Catalog
+cart additions resolve the product in the database and discard client-supplied
+price/name values. Legacy non-catalog cart IDs remain available only for
+backward-compatible development flows and do not receive inventory treatment.
+
 ## Idempotent commerce writes
 
 `idempotency_records` stores the operation, authenticated customer, SHA-256

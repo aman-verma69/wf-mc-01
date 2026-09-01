@@ -70,6 +70,8 @@ async def cancel_order(db: AsyncSession, *, actor: str, customer_id: str, order_
         raise ValueError("Paid orders require refund authorization and separate refund flow")
 
     order.status = OrderStatus.CANCELLED
+    from backend.services.catalog_service import release_order_inventory
+    await release_order_inventory(db, order_id=order.id)
     await db.commit()
     await db.refresh(order)
     await log_action(

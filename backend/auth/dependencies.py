@@ -34,3 +34,9 @@ async def get_current_customer(
     if customer is None or not customer.is_active:
         raise unauthorized
     return customer
+
+
+async def get_current_merchant(customer: Customer = Depends(get_current_customer)) -> Customer:
+    if customer.role != "merchant":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Merchant access required")
+    return customer

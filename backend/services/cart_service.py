@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database.models import Cart
+from backend.database.models import Cart, Product
 
 
 def normalize_cart(cart: dict[str, Any] | None, *, customer_id: str | None = None) -> dict[str, Any]:
@@ -220,6 +220,18 @@ async def add_item_to_db_cart(db: AsyncSession, *, customer_id: str, item: dict[
     product_id = str(item.get("product_id") or item.get("id") or item.get("sku") or "").strip()
     if not product_id:
         raise ValueError("Cart item is missing product_id")
+
+    catalog_product = await db.get(Product, product_id)
+    if catalog_product is not None:
+        if not catalog_product.is_active:
+            raise ValueError(f"Product {catalog_product.sku} is inactive")
+        item = {
+            "product_id": catalog_product.id,
+            "name": catalog_product.name,
+            "quantity": item.get("quantity", 1),
+            "unit_price_paise": catalog_product.price_paise,
+            "currency": catalog_product.currency,
+        }
 
     qty = int(item.get("quantity") or 1)
     if qty <= 0:

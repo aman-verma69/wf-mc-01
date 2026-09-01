@@ -6,10 +6,11 @@ triggered by an agent (see policy/guardrail.py).
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.audit.audit_logger import log_action
-from backend.database.models import Order, OrderStatus
+from backend.database.models import Order, OrderStatus, gen_uuid
 from backend.integrations.razorpay.client import create_order
 from backend.policy.guardrail import CheckoutRequest, GateDecision, check_checkout_request
-from backend.services.cart_service import calculate_cart_total_paise
+from backend.services.cart_service import calculate_cart_total_paise, get_cart
+from backend.services.catalog_service import reserve_order_inventory
 
 
 class CheckoutBlocked(Exception):
@@ -42,7 +43,7 @@ async def initiate_checkout(
     from any model-supplied value. If a caller provides a value, it is ignored for
     the final charge calculation.
     """
-    normalized_cart = cart_snapshot or {"items": [], "customer_id": customer_id}
+    normalized_cart = await get_cart(db, customer_id=customer_id)
     trusted_total = calculate_cart_total_paise(normalized_cart)
     if trusted_total <= 0:
         raise ValueError("Cart is empty or does not contain trusted product totals")
@@ -62,16 +63,7 @@ async def initiate_checkout(
         raise CheckoutBlocked(gate_result.reason)
 
     if gate_result.decision == GateDecision.ESCALATED:
-        order = Order(
-            customer_id=customer_id,
-            amount_paise=gate_amount,
-            cart_snapshot=normalized_cart,
-            created_by_agent=actor,
-            status=OrderStatus.AWAITING_CONFIRMATION,
-        )
-        db.add(order)
-        await db.commit()
-        await db.refresh(order)
+        order = await _create_pending_order(db, actor=actor, customer_id=customer_id, amount_paise=gate_amount, cart=normalized_cart)
         raise CheckoutAwaitingConfirmation(order.id, gate_result.reason)
 
     return await _create_order(db, actor=actor, customer_id=customer_id, amount_paise=gate_amount, cart_snapshot=normalized_cart)
@@ -104,17 +96,17 @@ async def confirm_and_create_order(db: AsyncSession, order_id: str, confirmed_by
 
 
 async def _create_order(db: AsyncSession, *, actor: str, customer_id: str, amount_paise: int, cart_snapshot: dict) -> Order:
-    rp_order = create_order(amount_paise=amount_paise)
+    order = await _create_pending_order(db, actor=actor, customer_id=customer_id, amount_paise=amount_paise, cart=cart_snapshot, status=OrderStatus.CREATED)
+    try:
+        rp_order = create_order(amount_paise=order.amount_paise)
+    except Exception:
+        from backend.services.catalog_service import release_order_inventory
+        await release_order_inventory(db, order_id=order.id)
+        order.status = OrderStatus.FAILED
+        await db.commit()
+        raise
 
-    order = Order(
-        razorpay_order_id=rp_order["id"],
-        customer_id=customer_id,
-        amount_paise=amount_paise,
-        cart_snapshot=cart_snapshot,
-        created_by_agent=actor,
-        status=OrderStatus.CREATED,
-    )
-    db.add(order)
+    order.razorpay_order_id = rp_order["id"]
     await db.commit()
     await db.refresh(order)
 
@@ -123,6 +115,24 @@ async def _create_order(db: AsyncSession, *, actor: str, customer_id: str, amoun
         actor=actor,
         action="checkout.initiate",
         decision="allowed",
-        context={"order_id": order.id, "razorpay_order_id": rp_order["id"], "amount_paise": amount_paise},
+        context={"order_id": order.id, "razorpay_order_id": rp_order["id"], "amount_paise": order.amount_paise},
     )
+    return order
+
+
+async def _create_pending_order(db: AsyncSession, *, actor: str, customer_id: str, amount_paise: int, cart: dict, status: OrderStatus = OrderStatus.AWAITING_CONFIRMATION) -> Order:
+    order = Order(
+        id=gen_uuid(),
+        customer_id=customer_id,
+        amount_paise=amount_paise,
+        cart_snapshot={},
+        created_by_agent=actor,
+        status=status,
+    )
+    db.add(order)
+    await db.flush()
+    order.cart_snapshot = await reserve_order_inventory(db, order_id=order.id, cart=cart)
+    order.amount_paise = calculate_cart_total_paise(order.cart_snapshot)
+    await db.commit()
+    await db.refresh(order)
     return order

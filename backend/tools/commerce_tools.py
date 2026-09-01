@@ -12,10 +12,13 @@ import re
 from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from backend.integrations.tavily.client import search as tavily_search
 from backend.services.cart_service import add_item_to_db_cart, get_cart, remove_db_cart_item, update_db_cart_item
 from backend.services.checkout_service import CheckoutAwaitingConfirmation, CheckoutBlocked, initiate_checkout
+from backend.database.models import Product
+from backend.services.catalog_service import serialize_product
 
 
 PRODUCT_KEYWORDS = {
@@ -310,6 +313,14 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "list_catalog_products",
+            "description": "List active products from the trusted internal catalog with server-owned prices and stock.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_web",
             "description": "Search the web for current product, pricing, or trend information via Tavily.",
             "parameters": {
@@ -458,6 +469,10 @@ async def run_tool(
 
         products = normalize_search_results(result)
         return {"ok": True, "error": None, "result": result, "products": products}
+
+    if name == "list_catalog_products":
+        rows = (await db.execute(select(Product).where(Product.is_active.is_(True)).order_by(Product.created_at.desc()))).scalars().all()
+        return {"ok": True, "products": [serialize_product(product) for product in rows]}
 
     if name in {"get_cart", "view_cart"}:
         customer_id = arguments["customer_id"]

@@ -23,6 +23,43 @@ class CustomerResponse(BaseModel):
     email: EmailStr
     created_at: datetime
     is_active: bool
+    role: str
+
+
+class ProductCreateRequest(BaseModel):
+    sku: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str = ""
+    price_paise: int = Field(ge=0)
+    currency: str = "INR"
+    initial_stock: int = Field(default=0, ge=0)
+
+
+class ProductUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    description: str | None = None
+    price_paise: int | None = Field(default=None, ge=0)
+    is_active: bool | None = None
+
+
+class InventoryAdjustmentRequest(BaseModel):
+    add_quantity: int = Field(ge=0)
+
+
+class ProductResponse(BaseModel):
+    id: str
+    merchant_id: str
+    sku: str
+    name: str
+    description: str
+    price_paise: int
+    currency: str
+    physical_quantity: int
+    reserved_quantity: int
+    available_quantity: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
 
 
 class ProductCard(BaseModel):

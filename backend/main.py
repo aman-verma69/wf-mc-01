@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.v1 import agents, auth, checkout, customers, orders, payments, webhooks
+from backend.api.v1 import agents, auth, checkout, customers, orders, payments, products, webhooks
 from backend.observability.logging_config import configure_logging
 
 configure_logging()
@@ -21,6 +21,7 @@ app.add_middleware(
 
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(products.router, prefix="/api/v1")
 app.include_router(customers.router, prefix="/api/v1")
 app.include_router(orders.router, prefix="/api/v1")
 app.include_router(checkout.router, prefix="/api/v1")

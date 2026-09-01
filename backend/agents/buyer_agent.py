@@ -4,7 +4,7 @@ buyer_agent = BaseAgent(AgentConfig(
     name="buyer_agent",
     backend="groq",
     delegation_scope=["checkout"],  # only agent allowed to trigger checkout
-    allowed_tools=["search_web", "get_cart", "view_cart", "add_to_cart", "update_cart", "remove_from_cart", "initiate_checkout"],
+    allowed_tools=["search_web", "list_catalog_products", "get_cart", "view_cart", "add_to_cart", "update_cart", "remove_from_cart", "initiate_checkout"],
     allowed_delegations={"catalog", "customer"},
     system_prompt=(
         "You are the AI Commerce Copilot shopping assistant. You help users "

@@ -55,8 +55,11 @@ async def handle_payment_captured(db: AsyncSession, entity: dict) -> None:
         raw_webhook_payload=entity,
     )
     db.add(payment)
-    if _valid_order_transition(order.status, OrderStatus.PAID):
+    should_finalize_inventory = _valid_order_transition(order.status, OrderStatus.PAID)
+    if should_finalize_inventory:
         order.status = OrderStatus.PAID
+        from backend.services.catalog_service import finalize_order_inventory
+        await finalize_order_inventory(db, order_id=order.id)
     await db.commit()
 
     await log_action(db, actor="payment_service", action="payment.captured", decision="allowed",
@@ -72,8 +75,11 @@ async def handle_payment_failed(db: AsyncSession, entity: dict) -> None:
     if order is None:
         return
 
-    if _valid_order_transition(order.status, OrderStatus.FAILED):
+    should_release_inventory = _valid_order_transition(order.status, OrderStatus.FAILED)
+    if should_release_inventory:
         order.status = OrderStatus.FAILED
+        from backend.services.catalog_service import release_order_inventory
+        await release_order_inventory(db, order_id=order.id)
     await db.commit()
 
     await log_action(db, actor="payment_service", action="payment.failed", decision="allowed",

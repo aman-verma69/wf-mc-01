@@ -28,7 +28,7 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(status_code=409, detail="Email is already registered") from exc
-    return CustomerResponse(id=customer.id, email=customer.email, created_at=customer.created_at, is_active=customer.is_active)
+    return CustomerResponse(id=customer.id, email=customer.email, created_at=customer.created_at, is_active=customer.is_active, role=customer.role)
 
 
 @router.post("/login", response_model=AuthTokenResponse)
@@ -42,4 +42,4 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me", response_model=CustomerResponse)
 async def me(customer: Customer = Depends(get_current_customer)):
-    return CustomerResponse(id=customer.id, email=customer.email, created_at=customer.created_at, is_active=customer.is_active)
+    return CustomerResponse(id=customer.id, email=customer.email, created_at=customer.created_at, is_active=customer.is_active, role=customer.role)

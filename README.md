@@ -73,6 +73,14 @@ agent, and order routes. Customer identity is taken from the verified JWT;
 legacy `customer_id` path/body fields are retained only for route compatibility
 and must match the authenticated customer.
 
+Merchant product management uses `POST/PATCH /api/v1/products` and inventory
+adjustments use `PATCH /api/v1/products/{product_id}/inventory`. Merchant
+identity comes from the authenticated customer role. Catalog-backed cart items
+use server-side name, price, currency, and active status; older synthetic cart
+items remain supported for development compatibility and are not inventory
+managed. Inventory adjustments also accept the optional `Idempotency-Key`
+header.
+
 Critical checkout, confirmation, cancellation, and refund writes accept an
 optional `Idempotency-Key` header. Reusing the same key with the same operation,
 customer, and request returns the stored result; reusing it for a different
