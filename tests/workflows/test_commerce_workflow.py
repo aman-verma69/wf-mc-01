@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from llama_index.core.workflow import Context, StartEvent
 
 from backend.agents.base_agent import AgentConfig, BaseAgent
+from backend.auth.dependencies import get_current_customer
+from backend.database.models import Customer
 from backend.main import app
 from backend.tools.commerce_tools import normalize_search_results, parse_indian_price, run_tool
 from backend.workflows.commerce_workflow import AGENTS, CommerceWorkflow, RouteEvent
@@ -225,9 +227,11 @@ def test_chat_api_propagates_customer_id(monkeypatch):
         }
 
     monkeypatch.setattr(CommerceWorkflow, "run", fake_run)
+    app.dependency_overrides[get_current_customer] = lambda: Customer(id="cust-42", email="cust-42@example.com", password_hash="x")
     client = TestClient(app)
 
     response = client.post("/api/v1/agents/chat", json={"message": "show me earbuds under 5000", "customer_id": "cust-42"})
+    app.dependency_overrides.pop(get_current_customer, None)
 
     assert response.status_code == 200
     assert captured["customer_id"] == "cust-42"
@@ -366,8 +370,10 @@ def test_fastapi_endpoint_handles_tavily_connection_error_without_500(monkeypatc
         }
 
     monkeypatch.setattr(CommerceWorkflow, "run", fake_run)
+    app.dependency_overrides[get_current_customer] = lambda: Customer(id="cust-42", email="cust-42@example.com", password_hash="x")
     client = TestClient(app)
     response = client.post("/api/v1/agents/chat", json={"message": "Find me wireless headphones under ₹5000 and compare the best options for gaming", "customer_id": "cust-42"})
+    app.dependency_overrides.pop(get_current_customer, None)
 
     assert response.status_code == 200
     assert "temporarily unavailable" in response.json()["reply"] or "live product catalog" in response.json()["reply"]

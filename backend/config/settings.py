@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_SECRET_KEY: str = "change-me"
 
+    # --- Authentication ---
+    JWT_SECRET_KEY: str = "change-me-jwt-secret-at-least-32-bytes"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
     # --- Database ---
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/commerce"
 

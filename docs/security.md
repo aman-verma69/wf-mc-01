@@ -8,6 +8,16 @@ elsewhere in the codebase — it makes secrets impossible to audit.
 
 `.env` is gitignored. Only `.env.example` (no real values) is committed.
 
+## Customer authentication
+
+Customers authenticate with email and an Argon2 password hash. Passwords are
+never returned or stored in plaintext. Login issues a signed JWT using
+`JWT_SECRET_KEY`, `JWT_ALGORITHM`, and `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` from
+the central settings object. Protected commerce routes load the customer from
+the token subject and reject missing, invalid, expired, or inactive identities.
+Any legacy customer ID supplied in a path or body is checked against that
+identity and cannot select another customer's cart or order.
+
 ## Webhook verification
 
 `backend/integrations/razorpay/webhooks.py::verify_signature` runs a

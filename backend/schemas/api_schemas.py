@@ -1,4 +1,28 @@
-from pydantic import BaseModel, Field
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, Field
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class AuthTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class CustomerResponse(BaseModel):
+    id: str
+    email: EmailStr
+    created_at: datetime
+    is_active: bool
 
 
 class ProductCard(BaseModel):
@@ -71,7 +95,7 @@ class CartResponse(BaseModel):
 
 
 class CheckoutInitiateRequest(BaseModel):
-    customer_id: str
+    customer_id: str | None = None
     actor: str = "api"
 
 
@@ -112,5 +136,5 @@ class RefundRequest(BaseModel):
 
 
 class CancelOrderRequest(BaseModel):
-    customer_id: str
+    customer_id: str | None = None
     reason: str = "customer_request"

@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth.dependencies import get_current_customer
+from backend.database.models import Customer
 from backend.database.session import get_db
 from backend.schemas.api_schemas import CartItemCreateRequest, CartItemUpdateRequest, CartResponse, OrderStatusResponse
 from backend.services.cart_service import add_item_to_db_cart, clear_db_cart, get_cart, remove_db_cart_item, update_db_cart_item
@@ -10,13 +12,17 @@ router = APIRouter(prefix="/customers", tags=["customers"])
 
 
 @router.get("/{customer_id}/cart", response_model=CartResponse)
-async def get_customer_cart(customer_id: str, db: AsyncSession = Depends(get_db)):
-    cart = await get_cart(db, customer_id=customer_id)
+async def get_customer_cart(customer_id: str, db: AsyncSession = Depends(get_db), customer: Customer = Depends(get_current_customer)):
+    if customer_id != customer.id:
+        raise HTTPException(status_code=403, detail="Customer identity does not match token")
+    cart = await get_cart(db, customer_id=customer.id)
     return CartResponse(**cart)
 
 
 @router.post("/{customer_id}/cart/items", response_model=CartResponse)
-async def add_customer_cart_item(customer_id: str, request: CartItemCreateRequest, db: AsyncSession = Depends(get_db)):
+async def add_customer_cart_item(customer_id: str, request: CartItemCreateRequest, db: AsyncSession = Depends(get_db), customer: Customer = Depends(get_current_customer)):
+    if customer_id != customer.id:
+        raise HTTPException(status_code=403, detail="Customer identity does not match token")
     item = {
         "product_id": request.product_id,
         "name": request.name,
@@ -24,29 +30,37 @@ async def add_customer_cart_item(customer_id: str, request: CartItemCreateReques
         "unit_price_paise": request.unit_price_paise if request.unit_price_paise is not None else request.price_paise,
         "currency": request.currency,
     }
-    cart = await add_item_to_db_cart(db, customer_id=customer_id, item=item)
+    cart = await add_item_to_db_cart(db, customer_id=customer.id, item=item)
     return CartResponse(**cart)
 
 
 @router.patch("/{customer_id}/cart/items/{product_id}", response_model=CartResponse)
-async def update_customer_cart_item(customer_id: str, product_id: str, request: CartItemUpdateRequest, db: AsyncSession = Depends(get_db)):
-    cart = await update_db_cart_item(db, customer_id=customer_id, product_id=product_id, quantity=request.quantity)
+async def update_customer_cart_item(customer_id: str, product_id: str, request: CartItemUpdateRequest, db: AsyncSession = Depends(get_db), customer: Customer = Depends(get_current_customer)):
+    if customer_id != customer.id:
+        raise HTTPException(status_code=403, detail="Customer identity does not match token")
+    cart = await update_db_cart_item(db, customer_id=customer.id, product_id=product_id, quantity=request.quantity)
     return CartResponse(**cart)
 
 
 @router.delete("/{customer_id}/cart/items/{product_id}", response_model=CartResponse)
-async def delete_customer_cart_item(customer_id: str, product_id: str, db: AsyncSession = Depends(get_db)):
-    cart = await remove_db_cart_item(db, customer_id=customer_id, product_id=product_id)
+async def delete_customer_cart_item(customer_id: str, product_id: str, db: AsyncSession = Depends(get_db), customer: Customer = Depends(get_current_customer)):
+    if customer_id != customer.id:
+        raise HTTPException(status_code=403, detail="Customer identity does not match token")
+    cart = await remove_db_cart_item(db, customer_id=customer.id, product_id=product_id)
     return CartResponse(**cart)
 
 
 @router.delete("/{customer_id}/cart", response_model=CartResponse)
-async def clear_customer_cart(customer_id: str, db: AsyncSession = Depends(get_db)):
-    cart = await clear_db_cart(db, customer_id=customer_id)
+async def clear_customer_cart(customer_id: str, db: AsyncSession = Depends(get_db), customer: Customer = Depends(get_current_customer)):
+    if customer_id != customer.id:
+        raise HTTPException(status_code=403, detail="Customer identity does not match token")
+    cart = await clear_db_cart(db, customer_id=customer.id)
     return CartResponse(**cart)
 
 
 @router.get("/{customer_id}/orders", response_model=list[OrderStatusResponse])
-async def get_customer_orders_route(customer_id: str, db: AsyncSession = Depends(get_db)):
-    orders = await get_customer_orders(db, customer_id=customer_id)
+async def get_customer_orders_route(customer_id: str, db: AsyncSession = Depends(get_db), customer: Customer = Depends(get_current_customer)):
+    if customer_id != customer.id:
+        raise HTTPException(status_code=403, detail="Customer identity does not match token")
+    orders = await get_customer_orders(db, customer_id=customer.id)
     return [OrderStatusResponse(**order) for order in orders]

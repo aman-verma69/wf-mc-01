@@ -31,11 +31,23 @@ def test_db():
     app.dependency_overrides.clear()
 
 
+def _register_and_login(client: TestClient, email: str) -> tuple[str, str]:
+    registered = client.post("/api/v1/auth/register", json={"email": email, "password": "correct horse battery"})
+    assert registered.status_code == 201, registered.text
+    customer_id = registered.json()["id"]
+    login = client.post("/api/v1/auth/login", json={"email": email, "password": "correct horse battery"})
+    assert login.status_code == 200, login.text
+    return customer_id, login.json()["access_token"]
+
+
 def test_customer_cart_lifecycle(test_db):
     client = TestClient(app)
+    customer_id, token = _register_and_login(client, "lifecycle@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
 
     response = client.post(
-        "/api/v1/customers/cust-1/cart/items",
+        f"/api/v1/customers/{customer_id}/cart/items",
+        headers=headers,
         json={
             "product_id": "prod-1",
             "name": "Sony WH-CH520",
@@ -46,32 +58,38 @@ def test_customer_cart_lifecycle(test_db):
     )
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["customer_id"] == "cust-1"
+    assert data["customer_id"] == customer_id
     assert data["total_paise"] == 3990
 
-    response = client.get("/api/v1/customers/cust-1/cart")
+    response = client.get(f"/api/v1/customers/{customer_id}/cart", headers=headers)
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["items"][0]["product_id"] == "prod-1"
     assert payload["items"][0]["quantity"] == 1
 
     response = client.patch(
-        "/api/v1/customers/cust-1/cart/items/prod-1",
+        f"/api/v1/customers/{customer_id}/cart/items/prod-1",
+        headers=headers,
         json={"quantity": 2},
     )
     assert response.status_code == 200, response.text
     assert response.json()["total_paise"] == 7980
 
-    response = client.delete("/api/v1/customers/cust-1/cart/items/prod-1")
+    response = client.delete(f"/api/v1/customers/{customer_id}/cart/items/prod-1", headers=headers)
     assert response.status_code == 200, response.text
     assert response.json()["items"] == []
 
 
 def test_checkout_uses_persisted_customer_cart_and_customer_isolation(test_db):
     client = TestClient(app)
+    customer_one, token_one = _register_and_login(client, "checkout-one@example.com")
+    customer_two, token_two = _register_and_login(client, "checkout-two@example.com")
+    headers_one = {"Authorization": f"Bearer {token_one}"}
+    headers_two = {"Authorization": f"Bearer {token_two}"}
 
     client.post(
-        "/api/v1/customers/cust-1/cart/items",
+        f"/api/v1/customers/{customer_one}/cart/items",
+        headers=headers_one,
         json={
             "product_id": "prod-1",
             "name": "Sony WH-CH520",
@@ -81,7 +99,8 @@ def test_checkout_uses_persisted_customer_cart_and_customer_isolation(test_db):
         },
     )
     client.post(
-        "/api/v1/customers/cust-2/cart/items",
+        f"/api/v1/customers/{customer_two}/cart/items",
+        headers=headers_two,
         json={
             "product_id": "prod-2",
             "name": "BoAt Rockerz 450",
@@ -93,29 +112,33 @@ def test_checkout_uses_persisted_customer_cart_and_customer_isolation(test_db):
 
     response = client.post(
         "/api/v1/checkout/initiate",
-        json={"customer_id": "cust-1"},
+        headers=headers_one,
+        json={"customer_id": customer_one},
     )
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["customer_id"] == "cust-1"
+    assert payload["customer_id"] == customer_one
     assert payload["amount_paise"] == 2500
 
-    response = client.get("/api/v1/customers/cust-1/orders")
+    response = client.get(f"/api/v1/customers/{customer_one}/orders", headers=headers_one)
     assert response.status_code == 200, response.text
     orders = response.json()
     assert len(orders) == 1
-    assert orders[0]["customer_id"] == "cust-1"
+    assert orders[0]["customer_id"] == customer_one
 
-    response = client.get("/api/v1/customers/cust-2/orders")
+    response = client.get(f"/api/v1/customers/{customer_two}/orders", headers=headers_two)
     assert response.status_code == 200, response.text
     assert response.json() == []
 
 
 def test_order_and_refund_authorization_checks(test_db):
     client = TestClient(app)
+    customer_id, token = _register_and_login(client, "orders@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
 
     client.post(
-        "/api/v1/customers/cust-1/cart/items",
+        f"/api/v1/customers/{customer_id}/cart/items",
+        headers=headers,
         json={
             "product_id": "prod-1",
             "name": "Sony WH-CH520",
@@ -125,22 +148,21 @@ def test_order_and_refund_authorization_checks(test_db):
         },
     )
 
-    checkout = client.post("/api/v1/checkout/initiate", json={"customer_id": "cust-1"})
+    checkout = client.post("/api/v1/checkout/initiate", headers=headers, json={"customer_id": customer_id})
     order_id = checkout.json()["order_id"]
 
-    response = client.get(f"/api/v1/orders/{order_id}")
+    response = client.get(f"/api/v1/orders/{order_id}", headers=headers)
     assert response.status_code == 200, response.text
-    assert response.json()["customer_id"] == "cust-1"
+    assert response.json()["customer_id"] == customer_id
 
-    response = client.get(f"/api/v1/customers/cust-2/orders")
-    assert response.status_code == 200, response.text
-    assert response.json() == []
+    response = client.get("/api/v1/customers/cust-2/orders", headers=headers)
+    assert response.status_code == 403, response.text
 
-    response = client.post(f"/api/v1/orders/{order_id}/cancel", json={"customer_id": "cust-1"})
+    response = client.post(f"/api/v1/orders/{order_id}/cancel", headers=headers, json={"customer_id": customer_id})
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "cancelled"
 
-    response = client.post(f"/api/v1/orders/{order_id}/cancel", json={"customer_id": "cust-1"})
+    response = client.post(f"/api/v1/orders/{order_id}/cancel", headers=headers, json={"customer_id": customer_id})
     assert response.status_code == 400, response.text
 
 def test_payment_captured_transitions_created_order_to_paid(test_db):

@@ -24,6 +24,8 @@ uvicorn backend.main:app --reload  # or: docker-compose up
 | `GPT_OSS_BASE_URL` / `GPT_OSS_API_KEY` | `backend/integrations/llm/gpt_oss_client.py` — used by `catalog_agent`, `analytics_agent`, `campaign_agent`. **This is self-hosted** (Ollama/vLLM) — there's no hosted key from a provider, point the URL at your own server | run `ollama pull gpt-oss:20b && ollama serve`, or `vllm serve openai/gpt-oss-20b` |
 | `TAVILY_API_KEY` | `backend/integrations/tavily/client.py` — web search tool used by `catalog_agent` / `growth_agent` | https://app.tavily.com |
 | `DATABASE_URL` | `backend/database/session.py` | your Postgres instance |
+| `JWT_SECRET_KEY` | `backend/auth/security.py` | a random secret of at least 32 bytes |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `backend/auth/security.py` | access-token lifetime (default: 60) |
 | `SMTP_*` / `WHATSAPP_API_KEY` | `backend/services/notification_service.py` (currently stubbed with `logger.info` — wire up a real provider when ready) | your email/WhatsApp provider |
 
 ## Razorpay webhook setup (do this once you have a public URL)
@@ -61,3 +63,12 @@ pytest tests/
 
 `tests/integration/` should mock Razorpay calls (don't hit the live API
 in CI) — record fixtures for webhook payloads rather than calling out.
+
+## Customer authentication
+
+Register and log in through `POST /api/v1/auth/register` and
+`POST /api/v1/auth/login`. Send the returned bearer token as
+`Authorization: Bearer <access_token>` to call `/auth/me`, cart, checkout,
+agent, and order routes. Customer identity is taken from the verified JWT;
+legacy `customer_id` path/body fields are retained only for route compatibility
+and must match the authenticated customer.

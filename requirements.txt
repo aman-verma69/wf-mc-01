@@ -10,3 +10,6 @@ openai>=1.40
 tavily-python>=0.5
 llama-index-core>=0.11
 python-multipart>=0.0.9
+PyJWT>=2.9
+pwdlib[argon2]>=0.2
+email-validator>=2.2

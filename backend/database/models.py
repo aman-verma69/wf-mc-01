@@ -37,6 +37,16 @@ class DisputeStatus(str, enum.Enum):
     LOST = "lost"
 
 
+class Customer(Base):
+    __tablename__ = "customers"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=gen_uuid)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+
 class Cart(Base):
     __tablename__ = "carts"
 
