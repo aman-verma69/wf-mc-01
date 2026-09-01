@@ -1,0 +1,8 @@
+"use client";
+import Link from "next/link";
+import { useState } from "react";
+import { CheckCircle2 } from "lucide-react";
+import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { Button, StateMessage } from "@/components/ui";
+export default function CheckoutPage() { const { customer } = useAuth(); const [loading, setLoading] = useState(false); const [result, setResult] = useState<Record<string, unknown> | null>(null); const [error, setError] = useState(""); async function begin() { if (!customer) return; setLoading(true); setError(""); try { setResult(await api.checkout(customer.id)); } catch (e) { setError(e instanceof Error ? e.message : "Checkout could not be started"); } finally { setLoading(false); } } return <div className="mx-auto max-w-2xl px-5 py-10 lg:py-16"><p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Checkout</p><h1 className="mt-3 font-display text-4xl font-bold tracking-tight">Ready when you are.</h1>{result ? <div className="mt-10 border border-[var(--border)] bg-white p-8"><CheckCircle2 className="text-[var(--success)]" size={28} /><h2 className="mt-5 font-display text-2xl font-bold">Order started</h2><p className="mt-2 text-sm text-[var(--muted-foreground)]">Your order is being prepared. Payment confirmation will come from the payment provider.</p><Link href="/orders" className="mt-7 inline-block"><Button>View orders</Button></Link></div> : <div className="mt-10"><p className="text-sm leading-7 text-[var(--muted-foreground)]">We will recheck your cart, current prices, and inventory before creating the order.</p>{error && <StateMessage>{error}</StateMessage>}<Button onClick={begin} loading={loading} className="mt-8">Start checkout</Button></div>}</div>; }

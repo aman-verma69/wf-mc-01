@@ -1,0 +1,7 @@
+"use client";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { api, formatPrice, type Order } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { SectionHeading, StateMessage } from "@/components/ui";
+export default function OrdersPage() { const { customer } = useAuth(); const [orders, setOrders] = useState<Order[]>([]); const [error, setError] = useState(""); useEffect(() => { if (customer) api.orders(customer.id).then(setOrders).catch(e => setError(e.message)); }, [customer]); return <div className="mx-auto max-w-5xl px-5 py-10 lg:px-8 lg:py-16"><SectionHeading eyebrow="Account" title="Your orders" />{error ? <StateMessage>{error}</StateMessage> : orders.length === 0 ? <StateMessage>No orders yet. <Link href="/products" className="font-semibold text-[var(--primary)]">Find something to bring home</Link></StateMessage> : <div className="divide-y divide-[var(--border)] border-y border-[var(--border)]">{orders.map(order => <Link href={`/orders/${order.order_id}`} key={order.order_id} className="flex items-center justify-between gap-4 bg-white px-5 py-5 hover:bg-[var(--surface-muted)]"><div><p className="font-mono text-xs text-[var(--muted-foreground)]">{order.order_id.slice(0, 8)}</p><p className="mt-2 text-sm font-semibold capitalize">{order.status.replaceAll("_", " ")}</p></div><p className="font-semibold">{formatPrice(order.amount_paise, order.currency)}</p></Link>)}</div>}</div>; }

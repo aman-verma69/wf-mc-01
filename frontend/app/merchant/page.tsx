@@ -1,14 +1,8 @@
-import { GuardrailSettings } from "@/features/merchant/GuardrailSettings";
+"use client";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { api, type Product, formatPrice } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { Button, SectionHeading, StateMessage } from "@/components/ui";
 
-export default function MerchantPage() {
-  return (
-    <div className="p-8 max-w-3xl">
-      <p className="text-xs font-mono text-ink-300 mb-2">merchant</p>
-      <h1 className="font-display text-2xl italic text-ink-50 mb-1">Set the gate's rules.</h1>
-      <p className="text-ink-300 text-sm mb-6 max-w-lg">
-        These are the only rules an agent cannot argue its way around.
-      </p>
-      <GuardrailSettings />
-    </div>
-  );
-}
+export default function MerchantPage() { const { customer } = useAuth(); const [products, setProducts] = useState<Product[]>([]); const [error, setError] = useState(""); useEffect(() => { if (customer?.role === "merchant") api.products().then(setProducts).catch(e => setError(e.message)); }, [customer]); if (customer?.role !== "merchant") return <div className="mx-auto max-w-3xl px-5 py-16"><StateMessage>Merchant access is required.</StateMessage></div>; return <div className="mx-auto max-w-7xl px-5 py-10 lg:px-8 lg:py-16"><SectionHeading eyebrow="Operations" title="Your catalog"><Link href="/merchant/products/new"><Button>Add product</Button></Link></SectionHeading>{error ? <StateMessage>{error}</StateMessage> : <div className="overflow-x-auto border-y border-[var(--border)] bg-white"><table className="w-full min-w-[680px] text-left text-sm"><thead className="border-b border-[var(--border)] text-xs uppercase tracking-wider text-[var(--muted-foreground)]"><tr><th className="px-5 py-4">Product</th><th>SKU</th><th>Price</th><th>Available</th><th>Status</th></tr></thead><tbody>{products.map(p => <tr key={p.id} className="border-b border-[var(--border)] last:border-0"><td className="px-5 py-5 font-semibold">{p.name}</td><td className="font-mono text-xs">{p.sku}</td><td>{formatPrice(p.price_paise)}</td><td>{p.available_quantity}</td><td className="text-[var(--success)]">{p.is_active ? "Active" : "Inactive"}</td></tr>)}</tbody></table></div>}</div>; }

@@ -1,0 +1,7 @@
+import { LoaderCircle } from "lucide-react";
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+
+export function Button({ children, loading, className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean }) { return <button {...props} className={`inline-flex min-h-11 items-center justify-center gap-2 bg-[var(--primary)] px-5 text-sm font-semibold text-white transition hover:bg-[var(--primary-dark)] disabled:cursor-not-allowed disabled:opacity-50 ${className}`}>{loading && <LoaderCircle size={16} className="animate-spin" />}{children}</button>; }
+export function Input(props: InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className={`h-11 w-full border border-[var(--border)] bg-white px-3 text-sm outline-none transition placeholder:text-[#9aa39d] focus:border-[var(--primary)] ${props.className ?? ""}`} />; }
+export function SectionHeading({ eyebrow, title, children }: { eyebrow?: string; title: string; children?: ReactNode }) { return <div className="mb-8 flex items-end justify-between gap-4"><div>{eyebrow && <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[var(--primary)]">{eyebrow}</p>}<h1 className="font-display text-3xl font-bold tracking-tight md:text-4xl">{title}</h1></div>{children}</div>; }
+export function StateMessage({ children }: { children: ReactNode }) { return <div className="border border-[var(--border)] bg-white p-8 text-sm text-[var(--muted-foreground)]">{children}</div>; }

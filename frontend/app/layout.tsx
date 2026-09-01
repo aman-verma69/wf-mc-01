@@ -1,44 +1,31 @@
 import type { Metadata } from "next";
-import { Fraunces, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { DM_Sans, Space_Grotesk } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/Sidebar";
-import { TopBar } from "@/components/TopBar";
+import { AuthProvider } from "@/lib/auth";
+import { AppShell } from "@/components/AppShell";
 
-const fraunces = Fraunces({
+const display = Space_Grotesk({
   subsets: ["latin"],
-  variable: "--font-fraunces",
-  weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
+  variable: "--font-space-grotesk",
+  weight: ["500", "600", "700"],
 });
 
-const plexSans = IBM_Plex_Sans({
+const work = DM_Sans({
   subsets: ["latin"],
-  variable: "--font-plex-sans",
-  weight: ["400", "500", "600"],
-});
-
-const plexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  variable: "--font-plex-mono",
-  weight: ["400", "500", "600"],
+  variable: "--font-work-sans",
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "Ledger — AI Commerce Control",
-  description: "Oversight for autonomous commerce agents operating on Razorpay.",
+  title: "Fieldhouse — considered commerce",
+  description: "A trusted catalog for products worth bringing home.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${plexSans.variable} ${plexMono.variable}`}>
-      <body className="font-sans">
-        <div className="flex min-h-screen">
-          <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0">
-            <TopBar />
-            <main className="flex-1 overflow-y-auto">{children}</main>
-          </div>
-        </div>
+    <html lang="en" className={`${display.variable} ${work.variable}`}>
+      <body>
+        <AuthProvider><AppShell>{children}</AppShell></AuthProvider>
       </body>
     </html>
   );

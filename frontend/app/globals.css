@@ -3,40 +3,38 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  --background: #f7f8f5;
+  --surface: #ffffff;
+  --surface-muted: #eef1ed;
+  --foreground: #17201b;
+  --muted-foreground: #69736d;
+  --primary: #176b59;
+  --primary-dark: #0e4d40;
+  --primary-foreground: #ffffff;
+  --border: #dfe5df;
+  --destructive: #b74336;
+  --success: #217653;
+  --warning: #a56b1c;
 }
 
+* { box-sizing: border-box; }
+html { background: var(--background); }
 body {
-  @apply bg-ink text-ink-50 antialiased;
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-work-sans), sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-::selection {
-  @apply bg-brass/30 text-ink-50;
-}
+::selection { background: #c9e6db; color: var(--foreground); }
+*:focus-visible { outline: 3px solid #9ed7c7; outline-offset: 3px; }
 
-*:focus-visible {
-  outline: 2px solid #B8923A;
-  outline-offset: 2px;
-}
-
-/* torn receipt-paper edge, used by the ledger tape */
-.torn-edge {
-  mask-image: linear-gradient(to bottom, transparent 0, black 8px);
-}
-.torn-edge::before {
-  content: "";
-  display: block;
-  height: 8px;
-  background-image: linear-gradient(135deg, transparent 50%, #182238 50%),
-    linear-gradient(45deg, transparent 50%, #182238 50%);
-  background-size: 10px 10px;
-  background-position: 0 0;
-}
+@keyframes rise-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.rise-in { animation: rise-in 500ms ease-out both; }
+.delay-1 { animation-delay: 80ms; }
+.delay-2 { animation-delay: 160ms; }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
