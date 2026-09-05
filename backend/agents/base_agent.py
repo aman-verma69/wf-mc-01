@@ -8,8 +8,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Literal
 
+from numpy import prod
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.v1 import products
 from backend.integrations.llm.gpt_oss_client import gpt_oss_chat
 from backend.integrations.llm.groq_client import groq_chat
 from backend.services.order_service import get_customer_orders
@@ -151,7 +153,7 @@ class BaseAgent:
         products: list[dict] = []
         lowered = (user_message or "").lower()
 
-        if self.config.name == "customer_agent" and any(token in lowered for token in ["where is my order", "track my order", "status of my order", "order status", "refund", "cancel my order", "cancel order", "return my order"]):
+        if self.config.name == "customer_agent" and any(token in lowered for token in ["where is my order", "track my order", "status of my order", "order status", "refund", "cancel my order", "cancel order", "return my order","shipment","delivery","tracking"]):
             customer_id = (workflow_state or {}).get("customer_id")
             if db is not None and customer_id:
                 orders = await get_customer_orders(db, customer_id=customer_id)
@@ -183,15 +185,21 @@ class BaseAgent:
                     "actions": ["order_status_lookup"],
                     "tool_calls": [],
                     "delegation_request": None,
+
                 }
 
-        if self._is_product_search(user_message):
-            search_result = await run_tool(
-                db,
-                actor=self.config.name,
-                name="search_web",
-                arguments={"query": user_message},
-            )
+                return {
+                    "status": "failed",
+                    "reply": "I couldn't look up your order because the customer session information is unavailable.",
+                    "products": [],
+                    "ok": False,
+                    "error": "customer_context_unavailable",
+                    "data": {},
+                    "actions": [],
+                    "tool_calls": [],
+                    "delegation_request": None,
+                }
+            
             if search_result.get("ok"):
                 search_products = search_result.get("products") or normalize_search_results(search_result.get("result"))
                 if search_products:
@@ -373,10 +381,16 @@ class BaseAgent:
                     )
 
                     # Preserve search results for the frontend.
-                    if tool_name == "search_web" and result.get("ok"):
-                        search_products = result.get("products") or normalize_search_results(result.get("result"))
-                        for product in search_products:
-                            products.append(product)
+                    if tool_name in {"search_web", "list_catalog_products"} and result.get("ok"):
+                        if tool_name == "search_web":
+                            tool_products = (
+                                result.get("products")
+                                or normalize_search_results(result.get("result"))
+                            )
+                        else:
+                            tool_products = result.get("products") or []
+
+                        products.extend(tool_products)
 
                     if tool_name in {"get_cart", "view_cart", "add_to_cart", "update_cart", "remove_from_cart"} and result.get("cart"):
                         # Keep the conversational state aligned with the DB result.

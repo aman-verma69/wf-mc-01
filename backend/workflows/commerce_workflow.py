@@ -20,6 +20,8 @@ from backend.agents.catalog_agent import catalog_agent
 from backend.agents.customer_agent import customer_agent
 from backend.agents.growth_agent import growth_agent
 from backend.services.cart_service import get_cart, normalize_cart
+from backend.workflows import intent
+from backend.workflows import intent
 from backend.workflows.intent import classify_intent
 
 AGENTS = {
@@ -113,16 +115,14 @@ class CommerceWorkflow(Workflow):
         }
 
     @staticmethod
-    def _infer_agent_key(agent_key: str | None, message: str) -> str:
+
+    def _infer_agent_key(agent_key: str | None, intent: str) -> str:
         candidate = (agent_key or "").strip().lower()
+
         if candidate and candidate in AGENTS:
             return candidate
 
-        intent = classify_intent(agent_key, message)
-        if intent in AGENT_BY_INTENT:
-            return AGENT_BY_INTENT[intent]
-
-        return "buyer"
+        return AGENT_BY_INTENT.get(intent, "buyer")
 
     @staticmethod
     def _is_delegation_allowed(source_agent: str, target_agent: str) -> bool:
@@ -152,8 +152,8 @@ class CommerceWorkflow(Workflow):
         if customer_id and db is not None:
             state["cart"] = await get_cart(db, customer_id=customer_id)
 
-        inferred_agent = self._infer_agent_key(agent_key, message)
         state["intent"] = classify_intent(agent_key, message)
+        inferred_agent = self._infer_agent_key(agent_key, state["intent"])
         state["selected_agent"] = inferred_agent
         state["active_agent"] = inferred_agent
         state["status"] = "routing"

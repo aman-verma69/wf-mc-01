@@ -2,17 +2,12 @@ import re
 
 
 def extract_price_ceiling_paise(message: str) -> int | None:
-    """Extract a maximum price ceiling from a shopper request in INR paise.
-
-    Examples:
-    - 'show me earbuds under 4000' -> 400000
-    - 'anything below rs. 1,200' -> 120000
-    - 'no price mentioned' -> None
-    """
+    """Extract a maximum price ceiling from a shopper request in INR paise."""
     if not message:
         return None
 
     text = (message or "").lower().replace("₹", "rs ")
+
     patterns = [
         r"(?:under|below|less than|max(?:imum)?|budget|upto|up to|within)\s*(?:rs\.?\s*)?(\d+(?:[\s,\.]\d+)*)",
         r"(?:rs\.?\s*|inr\s*)(\d+(?:[\s,\.]\d+)*)\s*(?:or less|max|maximum)",
@@ -22,61 +17,86 @@ def extract_price_ceiling_paise(message: str) -> int | None:
         match = re.search(pattern, text)
         if match:
             raw_value = match.group(1)
-            normalized = raw_value.replace(",", "").replace(" ", "")
-            if "." in normalized:
-                amount = float(normalized)
-            else:
-                amount = float(normalized)
+            amount = float(raw_value.replace(",", "").replace(" ", ""))
             return int(amount * 100)
 
     return None
 
 
 def classify_intent(agent_hint: str | None, message: str) -> str:
-    """Classify an incoming user message into a workflow intent.
-
-    This keeps the routing layer simple, deterministic, and testable while still
-    allowing the workflow to override the inferred route when a preferred agent is
-    explicitly supplied.
     """
+    Lightweight deterministic intent routing.
+
+    The selected agent's LLM will understand the detailed user request.
+    This function only decides which agent should receive the request.
+    """
+
+    # Respect a valid explicit agent selection.
+    hint = (agent_hint or "").strip().lower()
+
+    agent_intent_map = {
+        "buyer": "initiate_checkout",
+        "catalog": "search_catalog",
+        "customer": "order_status",
+        "analytics": "analytics",
+        "growth": "growth",
+        "campaign": "campaign",
+    }
+
+    if hint in agent_intent_map:
+        return agent_intent_map[hint]
+
     text = (message or "").lower()
-    if not text:
+
+    if not text.strip():
         return "general"
 
+    # Existing orders / support
     if any(token in text for token in [
         "where is my order",
         "track my order",
+        "track order",
         "order status",
         "status of my order",
+        "delivery status",
         "refund",
         "cancel my order",
         "cancel order",
         "return my order",
+        "return order",
     ]):
         return "order_status"
 
+    # Checkout / buying
     if any(token in text for token in [
         "checkout",
         "buy it",
+        "buy this",
         "purchase",
         "place order",
         "confirm purchase",
         "i'll take",
+        "i will take",
         "pay now",
         "proceed to checkout",
         "complete order",
+        "add to cart",
     ]):
         return "initiate_checkout"
 
+    # Catalog / product discovery
     if any(token in text for token in [
         "recommend",
+        "suggest",
         "show me",
         "find",
         "look for",
         "search",
         "compare",
-        "under ",
-        "below ",
+        "which one",
+        "best",
+        "under",
+        "below",
         "budget",
         "earbuds",
         "headphones",
@@ -85,18 +105,23 @@ def classify_intent(agent_hint: str | None, message: str) -> str:
         "shoe",
         "laptop",
         "phone",
+        "product",
     ]):
         return "search_catalog"
 
+    # Marketing campaigns
     if any(token in text for token in [
         "campaign",
         "send reminder",
         "outreach",
         "email blast",
         "audience",
+        "promotion",
+        "promotional",
     ]):
         return "campaign"
 
+    # Analytics
     if any(token in text for token in [
         "sales",
         "conversion",
@@ -104,25 +129,20 @@ def classify_intent(agent_hint: str | None, message: str) -> str:
         "trend",
         "analytics",
         "performance",
+        "metrics",
+        "how much did we sell",
     ]):
         return "analytics"
 
+    # Growth
     if any(token in text for token in [
         "growth",
         "abandoned cart",
         "retention",
         "upsell",
-        "recommendation",
+        "cross-sell",
+        "cross sell",
     ]):
         return "growth"
-
-    if agent_hint == "customer" and any(token in text for token in [
-        "order",
-        "refund",
-        "cancel",
-        "status",
-        "shipment",
-    ]):
-        return "order_status"
 
     return "general"

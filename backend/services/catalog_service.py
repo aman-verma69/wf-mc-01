@@ -26,8 +26,8 @@ def serialize_product(product: Product) -> dict[str, Any]:
         "reserved_quantity": product.reserved_quantity,
         "available_quantity": available_quantity(product),
         "is_active": product.is_active,
-        "created_at": product.created_at,
-        "updated_at": product.updated_at,
+        "created_at": product.created_at.isoformat() if product.created_at else None,
+        "updated_at": product.updated_at.isoformat() if product.updated_at else None,
     }
 
 

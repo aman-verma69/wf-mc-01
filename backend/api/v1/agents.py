@@ -12,7 +12,7 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 @router.post("/chat", response_model=AgentChatResponse)
 async def chat(request: AgentChatRequest, db: AsyncSession = Depends(get_db), customer: Customer = Depends(get_current_customer)):
-    workflow = CommerceWorkflow(timeout=60)
+    workflow = CommerceWorkflow(timeout=120)
     result = await workflow.run(
         db=db,
         message=request.message,

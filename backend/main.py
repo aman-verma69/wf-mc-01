@@ -1,12 +1,43 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.v1 import agents, auth, checkout, customers, orders, payments, products, webhooks
+from backend.api.v1 import (
+    agents,
+    auth,
+    checkout,
+    customers,
+    orders,
+    payments,
+    products,
+    webhooks,
+)
+from backend.database.models import Base
+from backend.database.session import engine
 from backend.observability.logging_config import configure_logging
+
 
 configure_logging()
 
-app = FastAPI(title="AI Commerce Platform", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Create missing database tables when the application starts.
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    yield
+
+    await engine.dispose()
+
+
+app = FastAPI(
+    title="AI Commerce Platform",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,6 +49,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
